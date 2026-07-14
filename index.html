@@ -1,0 +1,1253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Raptor Map Editor</title>
+<style>
+  :root {
+    --bg: #16181d; --panel: #1f232b; --panel2: #262b35; --line: #343b48;
+    --text: #cdd3de; --dim: #7d8697; --accent: #e8a33d; --sel: #4da3ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header .title { font-weight: 600; color: var(--accent); margin-right: 8px; }
+  button, select, input[type="number"], label.file {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 4px; padding: 4px 10px; font: inherit; cursor: pointer;
+  }
+  button:hover, label.file:hover { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  input[type="file"] { display: none; }
+  input[type="number"] { width: 62px; cursor: text; }
+  #status { margin-left: auto; color: var(--dim); }
+  #main { flex: 1; display: flex; min-height: 0; }
+  aside {
+    width: 292px; background: var(--panel); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .tabs { display: flex; }
+  .tabs button {
+    flex: 1; border-radius: 0; border: none; border-bottom: 2px solid transparent;
+    background: var(--panel); padding: 8px;
+  }
+  .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
+  .panel { flex: 1; display: none; flex-direction: column; min-height: 0; padding: 10px; gap: 8px; }
+  .panel.active { display: flex; }
+  .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .row .grow { flex: 1; }
+  .scroll { overflow: auto; border: 1px solid var(--line); background: #000; }
+  #tileGrid { flex: 1; }
+  #tileGridCanvas { display: block; image-rendering: pixelated; cursor: pointer; }
+  #tileSel { display: flex; gap: 8px; align-items: center; }
+  #tileSelCanvas { width: 64px; height: 64px; image-rendering: pixelated;
+    border: 1px solid var(--line); background: #000; }
+  .hint { color: var(--dim); font-size: 12px; }
+  #spriteList, #libList { flex: 1; overflow: auto; border: 1px solid var(--line); background: var(--panel2); }
+  #spriteList div, #libList div { padding: 3px 8px; cursor: pointer; display: flex; gap: 6px;
+    font-family: Consolas, monospace; font-size: 12px; white-space: nowrap; }
+  #spriteList div:hover, #libList div:hover { background: #2e3542; }
+  #spriteList div.sel, #libList div.sel { background: #31435f; }
+  #libList { flex: 0 0 140px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+  .grid2 label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--dim); }
+  .grid2 input, .grid2 select { width: 100%; min-width: 0; }
+  #pathCanvas { display: block; background: #0b0c0f; border: 1px solid var(--line);
+    cursor: crosshair; width: 100%; }
+  #libInameOk { font-size: 14px; }
+  #spritePrev { display: flex; gap: 8px; align-items: flex-start; min-height: 70px; }
+  #spritePrevCanvas { max-width: 96px; image-rendering: pixelated;
+    border: 1px solid var(--line); background: #000; }
+  fieldset { border: 1px solid var(--line); border-radius: 4px; padding: 8px; }
+  legend { color: var(--dim); padding: 0 4px; }
+  fieldset .row { margin-bottom: 6px; }
+  #wrap { flex: 1; overflow: auto; background: #0b0c0f; }
+  #map { display: block; image-rendering: pixelated; margin: 12px auto; cursor: crosshair; }
+  #drop {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(10,12,16,.92); font-size: 20px; color: var(--accent);
+    z-index: 10; text-align: center; cursor: pointer;
+  }
+  #drop.hide { display: none; }
+  #help {
+    position: fixed; inset: 0; z-index: 20; background: rgba(10,12,16,.85);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #help.hide { display: none; }
+  .helpbox {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    max-width: 640px; max-height: 86vh; overflow: auto; padding: 22px 28px;
+    line-height: 1.55;
+  }
+  .helpbox h2 { color: var(--accent); margin-bottom: 4px; }
+  .helpbox h3 { color: var(--accent); font-size: 13px; text-transform: uppercase;
+    letter-spacing: .06em; margin: 14px 0 2px; }
+  .helpbox p { margin: 4px 0; }
+  .helpbox i { color: var(--text); }
+  #drop .box {
+    border: 2px dashed var(--line); border-radius: 10px; padding: 40px 60px;
+    max-width: 640px;
+  }
+  #drop .box:hover { border-color: var(--accent); }
+  #dropMsg .hint { font-size: 14px; }
+  kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 3px;
+    padding: 0 5px; font-family: Consolas, monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="title">Raptor Map Editor</span>
+  <label class="file">Load GLBs<input type="file" id="fileInput" multiple accept=".glb,.GLB"></label>
+  <select id="mapSelect" disabled></select>
+  <select id="zoomSelect"><option value="1">1&times;</option><option value="2" selected>2&times;</option><option value="3">3&times;</option></select>
+  <label><input type="checkbox" id="labelsChk" checked> labels</label>
+  <button id="undoBtn" disabled>Undo</button>
+  <button id="jsonExportBtn" disabled>Export JSON</button>
+  <label class="file">Import JSON<input type="file" id="jsonInput" accept=".json"></label>
+  <button id="saveBtn" disabled>Download GLB</button>
+  <button id="helpBtn" title="help / about">?</button>
+  <span id="status">no files loaded</span>
+</header>
+
+<div id="main">
+  <aside>
+    <div class="tabs">
+      <button id="tabTiles" class="active">Tiles</button>
+      <button id="tabSprites">Sprites</button>
+      <button id="tabLib">Library</button>
+    </div>
+
+    <div class="panel active" id="panelTiles">
+      <div class="row">Bank <select id="tileBank"></select>
+        <span class="hint grow">right-click map = pick tile</span></div>
+      <div id="tileSel">
+        <canvas id="tileSelCanvas" width="32" height="32"></canvas>
+        <div id="tileSelInfo" class="hint">no tile selected</div>
+      </div>
+      <div class="scroll" id="tileGrid"><canvas id="tileGridCanvas"></canvas></div>
+    </div>
+
+    <div class="panel" id="panelSprites">
+      <div class="row">Bank <select id="spriteBank"></select>
+        <button id="placeBtn" disabled>Place mode</button></div>
+      <div id="spriteList"></div>
+      <div id="spritePrev">
+        <canvas id="spritePrevCanvas" width="32" height="32"></canvas>
+        <div id="spritePrevInfo" class="hint">select a library entry</div>
+      </div>
+      <fieldset id="props" style="display:none">
+        <legend>selected sprite</legend>
+        <div class="row">type <select id="propSlib" class="grow"></select></div>
+        <div class="row">difficulty <select id="propLevel">
+          <option value="3">easy</option><option value="4">medium</option>
+          <option value="5">hard</option><option value="1">secret 1</option>
+          <option value="2">secret 2</option><option value="6">secret 3</option>
+        </select>
+        link <input type="number" id="propLink"></div>
+        <div class="row">x <input type="number" id="propX" min="0" max="8">
+          y <input type="number" id="propY" min="0" max="139" title="rows 140-149 never spawn (scroll starts at 139)">
+          <button id="delBtn">Delete</button></div>
+      </fieldset>
+      <div class="hint">click = select &middot; drag = move &middot; <kbd>Del</kbd> remove &middot; <kbd>Esc</kbd> exit place mode</div>
+    </div>
+    <div class="panel" id="panelLib">
+      <div class="row">Bank <select id="libBank"></select>
+        <button id="dupBtn" disabled title="append a copy as a new entry">Duplicate</button></div>
+      <div id="libList"></div>
+      <fieldset id="libForm" style="display:none">
+        <legend>stats</legend>
+        <div class="row">graphic <input type="text" id="libIname" style="flex:1;min-width:0">
+          <span id="libInameOk"></span></div>
+        <div id="libNums" class="grid2"></div>
+      </fieldset>
+      <fieldset id="pathBox" style="display:none">
+        <legend>flight path &mdash; <span id="pathInfo"></span></legend>
+        <canvas id="pathCanvas" width="256" height="200"></canvas>
+        <div class="hint">drag waypoint &middot; click = add &middot; right-click = delete &middot; &#9733; = spawn point</div>
+      </fieldset>
+      <div class="hint">changes apply to <b>every</b> placement of the entry, on all maps using this bank</div>
+    </div>
+  </aside>
+  <div id="wrap"><canvas id="map" width="288" height="4800"></canvas></div>
+</div>
+
+<div id="drop"><div class="box">
+  <div style="font-size:26px;margin-bottom:6px">Raptor Map Editor</div>
+  <div class="hint" style="margin-bottom:18px">a community recreation of the lost
+    <i>Raptor: Call of the Shadows</i> level editor</div>
+  <div id="dropMsg">Drop FILE0000.GLB &ndash; FILE0004.GLB here<br>
+  <span class="hint">or click to browse &mdash; you can add files one at a time<br>
+  100% local: your files never leave this computer</span></div>
+  <div style="margin-top:16px;font-size:13px"><a href="#" id="dropHelp"
+    style="color:var(--accent)">what is this?</a></div>
+</div></div>
+
+<div id="help" class="hide"><div class="helpbox">
+  <h2>Raptor Map Editor <span class="hint" style="font-size:13px">community recreation &middot; 2026</span></h2>
+  <h3>Getting started</h3>
+  <p>Load the game's <b>FILE0000.GLB&ndash;FILE0004.GLB</b> (shareware needs only 0000+0001).
+  Pick a map &mdash; it opens scrolled to the bottom, which is where the level starts in-game.
+  Nothing is ever uploaded, and your original files are never modified: saving downloads
+  <i>patched copies</i>.</p>
+  <h3>Tiles tab</h3>
+  <p>Pick a tileset bank and a tile, then click/drag on the map to paint.
+  <b>Right-click the map</b> to eyedrop any tile. A red dot in the picker marks
+  destructible tiles; the info box shows what they break into and their bounty.</p>
+  <h3>Sprites tab</h3>
+  <p>Click a placed enemy to select it (its <b>flight path</b> overlays in cyan),
+  drag to move, <kbd>Del</kbd> to remove. Pick a library entry and <i>Place mode</i>
+  to stamp new ones. Difficulty boxes: <span style="color:#3cdc3c">easy</span> &middot;
+  <span style="color:#ffd228">medium</span> &middot; <span style="color:#ff3c3c">hard</span>
+  &middot; <span style="color:#3cdcdc">secret</span>. Rows 140&ndash;149 never spawn
+  (the engine's scroll trigger starts at row 139), so placement is capped there.</p>
+  <h3>Library tab</h3>
+  <p>Edits the enemy definitions themselves &mdash; hit points, bounty, speed, fire rate,
+  flight type &mdash; and the flight path on a canvas: drag waypoints, click to add,
+  right-click to delete. ★ is the spawn point; on <i>repeat</i> paths the orange waypoint
+  is the loop-back target. <b>Duplicate</b> appends a copy as a brand-new enemy &mdash;
+  the engine reads the entry count from the data size, so new enemies work even in the
+  unmodified original game. Library changes affect every placement of that entry.</p>
+  <h3>Saving &amp; testing</h3>
+  <p><b>Download GLB</b> saves patched copies of every archive you touched.
+  Back up your originals, drop the patched files next to any Raptor that reads
+  v1.2 GLBs (DOS, Steam DOS, 2015 Edition, or the open-source port) and play.
+  JSON export/import matches the companion command-line tools.</p>
+  <h3>Shortcuts</h3>
+  <p><kbd>Ctrl+Z</kbd> undo (per map / per library bank) &middot; <kbd>Del</kbd> delete
+  selected sprite &middot; <kbd>Esc</kbd> exit place mode or close this help.</p>
+  <h3>About</h3>
+  <p>Built by a lifelong Raptor fan by studying the released DOS source code and the
+  GPL-2 open-source port. Every file format was validated byte-for-byte against the
+  shipped data &mdash; an untouched map re-saves byte-identically. This tool contains
+  and distributes <b>no game data</b>; you supply your own GLB files.</p>
+  <p style="text-align:center;margin-top:14px"><button id="helpClose">close</button></p>
+</div></div>
+
+<script>
+"use strict";
+/* ================================================================== CORE ==
+   Data layer - formats from the released Raptor source; validated against
+   the shipped GLBs (see ../MAP-EDITOR-FEASIBILITY.md). DOM-free on purpose:
+   tools/test_editor_core.mjs extracts and unit-tests this block.
+============================================================================ */
+const KEY = "32768GLB", SEED = 0x19;
+const MAP_COLS = 9, MAP_ROWS = 150, MAP_SIZE = MAP_COLS * MAP_ROWS;
+const MAZELEVEL_SIZE = 12 + MAP_SIZE * 4, CSPRITE_SIZE = 24, SPRITE_SIZE = 528;
+const LEVEL_NAMES = { 1: "secret1", 2: "secret2", 3: "easy", 4: "medium", 5: "hard", 6: "secret3" };
+const LEVEL_COLORS = { 3: "#3cdc3c", 4: "#ffd228", 5: "#ff3c3c", 1: "#3cdcdc", 2: "#3cdcdc", 6: "#3cdcdc" };
+
+function glbDecrypt(u8) {
+  let kidx = SEED % KEY.length, prev = KEY.charCodeAt(kidx);
+  const out = new Uint8Array(u8.length);
+  for (let i = 0; i < u8.length; i++) {
+    out[i] = (u8[i] - KEY.charCodeAt(kidx) - prev + 512) & 0xFF;
+    prev = u8[i];
+    kidx = (kidx + 1) % KEY.length;
+  }
+  return out;
+}
+
+function glbEncrypt(u8) {
+  let kidx = SEED % KEY.length, prev = KEY.charCodeAt(kidx);
+  const out = new Uint8Array(u8.length);
+  for (let i = 0; i < u8.length; i++) {
+    prev = (u8[i] + KEY.charCodeAt(kidx) + prev) & 0xFF;
+    out[i] = prev;
+    kidx = (kidx + 1) % KEY.length;
+  }
+  return out;
+}
+
+function parseGlb(buf) {
+  const u8 = new Uint8Array(buf);
+  const hdr = glbDecrypt(u8.subarray(0, 28));
+  const count = new DataView(hdr.buffer).getUint32(4, true);
+  const items = [];
+  for (let i = 0; i < count; i++) {
+    const e = glbDecrypt(u8.subarray(28 * (i + 1), 28 * (i + 2)));
+    const dv = new DataView(e.buffer);
+    const flags = dv.getUint32(0, true), offset = dv.getUint32(4, true), size = dv.getUint32(8, true);
+    let name = "";
+    for (let j = 12; j < 28 && e[j]; j++) name += String.fromCharCode(e[j]);
+    let data = u8.slice(offset, offset + size);
+    if (flags & 1) data = glbDecrypt(data);
+    items.push({ flags, name, data });
+  }
+  return { items };
+}
+
+function buildGlb(glb) {
+  const count = glb.items.length;
+  const fat = new Uint8Array(28 * (count + 1));
+  const blobs = [];
+  let offset = fat.length, total = fat.length;
+  const packEntry = (pos, flags, off, size, name) => {
+    const e = new Uint8Array(28), dv = new DataView(e.buffer);
+    dv.setUint32(0, flags, true); dv.setUint32(4, off, true); dv.setUint32(8, size, true);
+    for (let j = 0; j < Math.min(name.length, 15); j++) e[12 + j] = name.charCodeAt(j);
+    fat.set(glbEncrypt(e), pos);
+  };
+  packEntry(0, 0, count, 0, "");
+  glb.items.forEach((it, i) => {
+    packEntry(28 * (i + 1), it.flags, offset, it.data.length, it.name);
+    const blob = (it.flags & 1) ? glbEncrypt(it.data) : it.data;
+    blobs.push(blob);
+    offset += blob.length; total += blob.length;
+  });
+  const out = new Uint8Array(total);
+  out.set(fat, 0);
+  let pos = fat.length;
+  for (const b of blobs) { out.set(b, pos); pos += b.length; }
+  return out;
+}
+
+function parseMap(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const sizerec = dv.getUint32(0, true), spriteoff = dv.getUint32(4, true), n = dv.getInt32(8, true);
+  if (sizerec !== u8.length || spriteoff !== MAZELEVEL_SIZE) throw new Error("not a MAZELEVEL item");
+  const tiles = [];
+  for (let r = 0; r < MAP_ROWS; r++) {
+    const row = [];
+    for (let c = 0; c < MAP_COLS; c++) {
+      const o = 12 + (r * MAP_COLS + c) * 4;
+      row.push({ flats: dv.getInt16(o, true), fgame: dv.getInt16(o + 2, true) });
+    }
+    tiles.push(row);
+  }
+  const sprites = [];
+  for (let i = 0; i < n; i++) {
+    const o = spriteoff + i * CSPRITE_SIZE;
+    sprites.push({
+      link: dv.getInt32(o, true), slib: dv.getInt32(o + 4, true),
+      x: dv.getInt32(o + 8, true), y: dv.getInt32(o + 12, true),
+      game: dv.getInt32(o + 16, true), level: dv.getUint32(o + 20, true),
+    });
+  }
+  return { rows: MAP_ROWS, cols: MAP_COLS, tiles, sprites };
+}
+
+function buildMap(m) {
+  const size = MAZELEVEL_SIZE + m.sprites.length * CSPRITE_SIZE;
+  const out = new Uint8Array(size), dv = new DataView(out.buffer);
+  dv.setUint32(0, size, true); dv.setUint32(4, MAZELEVEL_SIZE, true);
+  dv.setInt32(8, m.sprites.length, true);
+  for (let r = 0; r < MAP_ROWS; r++)
+    for (let c = 0; c < MAP_COLS; c++) {
+      const o = 12 + (r * MAP_COLS + c) * 4;
+      dv.setInt16(o, m.tiles[r][c].flats, true);
+      dv.setInt16(o + 2, m.tiles[r][c].fgame, true);
+    }
+  m.sprites.forEach((s, i) => {
+    const o = MAZELEVEL_SIZE + i * CSPRITE_SIZE;
+    dv.setInt32(o, s.link, true); dv.setInt32(o + 4, s.slib, true);
+    dv.setInt32(o + 8, s.x, true); dv.setInt32(o + 12, s.y, true);
+    dv.setInt32(o + 16, s.game, true); dv.setUint32(o + 20, s.level, true);
+  });
+  return out;
+}
+
+/* Spawn groups: consecutive CSPRITEs chained until link is 1 or -1
+   (enemy.cpp:693-707). The engine spawns a group when the scroll row reaches
+   its HEAD's y via a forward-only cursor, so group heads must be in
+   descending-y order and <= 139 or the cursor stalls and everything after it
+   silently never spawns. All 27 original maps satisfy this, so normalizing
+   them is a no-op. */
+function spawnGroups(sprites) {
+  const groups = [];
+  let g = [];
+  for (const s of sprites) {
+    g.push(s);
+    if (s.link === 1 || s.link === -1) { groups.push(g); g = []; }
+  }
+  if (g.length) groups.push(g);
+  return groups;
+}
+
+function normalizeSpawnOrder(sprites) {
+  const groups = spawnGroups(sprites);
+  groups.sort((a, b) => b[0].y - a[0].y);          // Array.sort is stable
+  return groups.flat();
+}
+
+const MAX_SPAWN_ROW = 139;                          // scroll starts at row 139
+
+/* Full 528-byte SPRITE records (MAP.H:95-132). Field names match the Python
+   tools' JSON so lib2json/json2lib interoperate. */
+const SPRITE_INT_FIELDS = [
+  "item", "bonus", "exptype", "shotspace", "ground", "suck", "frame_rate",
+  "num_frames", "countdown", "rewind", "animtype", "shadow", "bossflag",
+  "hits", "money", "shootstart", "shootcnt", "shootframe", "movespeed",
+  "numflight", "repos", "flighttype", "numguns", "numengs", "sfx", "song",
+];
+const SPRITE_SHORT_FIELDS = [
+  ["shoot_type", 24], ["engx", 24], ["engy", 24], ["englx", 24],
+  ["shootx", 24], ["shooty", 24], ["flightx", 30], ["flighty", 30],
+];
+const FLIGHT_NAMES = ["repeat", "linear", "kamikaze", "ground", "ground-left", "ground-right"];
+
+function parseSpriteLib(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const out = [];
+  for (let base = 0; base + SPRITE_SIZE <= u8.length; base += SPRITE_SIZE) {
+    let iname = "";
+    for (let j = 0; j < 16 && u8[base + j]; j++) iname += String.fromCharCode(u8[base + j]);
+    const s = { iname };
+    SPRITE_INT_FIELDS.forEach((f, i) => s[f] = dv.getInt32(base + 16 + i * 4, true));
+    let off = base + 120;
+    for (const [f, n] of SPRITE_SHORT_FIELDS) {
+      s[f] = [];
+      for (let i = 0; i < n; i++) { s[f].push(dv.getInt16(off, true)); off += 2; }
+    }
+    out.push(s);
+  }
+  return out;
+}
+
+function buildSpriteLib(lib) {
+  const out = new Uint8Array(lib.length * SPRITE_SIZE);
+  const dv = new DataView(out.buffer);
+  lib.forEach((s, r) => {
+    const base = r * SPRITE_SIZE;
+    for (let j = 0; j < Math.min(s.iname.length, 15); j++) out[base + j] = s.iname.charCodeAt(j);
+    SPRITE_INT_FIELDS.forEach((f, i) => dv.setInt32(base + 16 + i * 4, s[f] | 0, true));
+    let off = base + 120;
+    for (const [f, n] of SPRITE_SHORT_FIELDS)
+      for (let i = 0; i < n; i++) { dv.setInt16(off, (s[f] && s[f][i]) | 0, true); off += 2; }
+  });
+  return out;
+}
+
+function parseFlats(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const out = [];
+  for (let o = 0; o + 8 <= u8.length; o += 8)
+    out.push({ linkflat: dv.getInt32(o, true), bonus: dv.getInt16(o + 4, true), bounty: dv.getInt16(o + 6, true) });
+  return out;
+}
+
+/* GFX_PIC -> {w, h, rgba} (Uint8ClampedArray, transparent where unmasked) */
+function decodePic(u8, palette) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const type = dv.getInt32(0, true), w = dv.getInt32(12, true), h = dv.getInt32(16, true);
+  if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return null;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  const put = (idx, p) => {
+    const c = palette[p];
+    rgba[idx * 4] = c[0]; rgba[idx * 4 + 1] = c[1]; rgba[idx * 4 + 2] = c[2]; rgba[idx * 4 + 3] = 255;
+  };
+  if (type === 1) {                                    // GPIC: raw 8bpp
+    for (let i = 0; i < w * h && 20 + i < u8.length; i++) put(i, u8[20 + i]);
+  } else if (type === 0) {                             // GSPRITE: segment runs
+    let pos = 20;
+    while (pos + 16 <= u8.length) {
+      const x = dv.getInt32(pos, true), y = dv.getInt32(pos + 4, true),
+        off = dv.getInt32(pos + 8, true), len = dv.getInt32(pos + 12, true);
+      if (off === -1) break;
+      pos += 16;
+      if (y >= 0 && y < h)
+        for (let j = 0; j < len; j++)
+          if (x + j >= 0 && x + j < w) put(y * w + x + j, u8[pos + j]);
+      pos += len;
+    }
+  } else return null;
+  return { w, h, rgba };
+}
+/* ================================================================ END CORE */
+
+if (typeof document !== "undefined") (function initUI() {
+
+  const $ = id => document.getElementById(id);
+  const TILE = 32;
+
+  // ---- state ------------------------------------------------------------
+  const files = new Map();          // filenum -> {glb, filename}
+  let palette = null;               // [[r,g,b] x 256]
+  let mapIndex = [];                // [{name, filenum, idx}]
+  const levels = new Map();         // map name -> parsed level (live edit state)
+  const dirty = new Set();          // map names with uncommitted edits
+  const undoStacks = new Map();     // map name -> [json...]
+  let curMap = null;                // current map name
+  let mode = "tiles";
+  let zoom = 2;
+  let curTile = null;               // {bank, flats}
+  let curLibSel = null;             // {bank, slib} selected in library list
+  let placing = false;
+  let selSprite = -1;               // index into level.sprites
+  let dragging = false, painting = false;
+  const picCache = new Map();       // itemId -> canvas|null
+  const tilesetStart = new Map();   // bank -> first tile item id
+  const spriteLibs = new Map();     // bank -> parsed lib
+  const flatsLibs = new Map();      // bank -> parsed flats
+
+  const canvas = $("map"), ctx = canvas.getContext("2d");
+
+  // ---- GLB set helpers ----------------------------------------------------
+  function itemId(name) {
+    for (const num of [...files.keys()].sort((a, b) => a - b)) {
+      const idx = files.get(num).glb.items.findIndex(it => it.name === name);
+      if (idx >= 0) return (num << 16) | idx;
+    }
+    return -1;
+  }
+  const byId = id => files.get(id >> 16).glb.items[id & 0xFFFF];
+
+  function bankData(map, bank) {
+    if (!map.has(bank)) {
+      try {
+        if (map === tilesetStart) map.set(bank, itemId(`STARTG${bank + 1}TILES`) + 1);
+        else if (map === spriteLibs) map.set(bank, parseSpriteLib(byId(itemId(`SPRITE${bank + 1}_ITM`)).data));
+        else map.set(bank, parseFlats(byId(itemId(`FLATSG${bank + 1}_ITM`)).data));
+      } catch { map.set(bank, map === tilesetStart ? -1 : []); }
+    }
+    return map.get(bank);
+  }
+
+  function pic(id) {
+    if (!picCache.has(id)) {
+      let cv = null;
+      try {
+        const d = decodePic(byId(id).data, palette);
+        if (d) {
+          cv = document.createElement("canvas");
+          cv.width = d.w; cv.height = d.h;
+          cv.getContext("2d").putImageData(new ImageData(d.rgba, d.w, d.h), 0, 0);
+        }
+      } catch { /* missing file or not a pic */ }
+      picCache.set(id, cv);
+    }
+    return picCache.get(id);
+  }
+
+  const tilePic = (bank, flats) => {
+    const start = bankData(tilesetStart, bank);
+    return start >= 0 ? pic(start + flats) : null;
+  };
+
+  function spriteGfx(game, slib) {
+    const lib = bankData(spriteLibs, game);
+    const entry = lib[slib];
+    if (!entry) return null;
+    const id = itemId(entry.iname);
+    return id >= 0 ? pic(id) : null;
+  }
+
+  // ---- file loading -------------------------------------------------------
+  function dropMsg(html) {                 // feedback on the overlay while it's up
+    $("dropMsg").innerHTML = html;
+    setStatus($("dropMsg").textContent.replace(/\s+/g, " ").trim());
+  }
+
+  async function loadFiles(fileList) {
+    const skipped = [];
+    for (const f of fileList) {
+      const m = /^FILE(\d{4})\.GLB$/i.exec(f.name);
+      if (!m) { skipped.push(f.name); continue; }
+      try {
+        files.set(parseInt(m[1], 10), { glb: parseGlb(await f.arrayBuffer()), filename: f.name.toUpperCase() });
+      } catch (e) { dropMsg(`Failed to parse ${f.name}: ${e.message}`); return; }
+    }
+    const loaded = [...files.keys()].sort((a, b) => a - b)
+      .map(n => files.get(n).filename).join(", ");
+    const skipNote = skipped.length
+      ? `<br><span class="hint">skipped (not FILE000n.GLB): ${skipped.join(", ")}</span>` : "";
+    if (!files.size) {
+      dropMsg(`No GLB files recognized.${skipNote}<br>
+        <span class="hint">Expected names like FILE0000.GLB &ndash; FILE0004.GLB</span>`);
+      return;
+    }
+    picCache.clear(); tilesetStart.clear(); spriteLibs.clear(); flatsLibs.clear();
+    const palId = itemId("PALETTE_DAT");
+    if (palId < 0) {
+      dropMsg(`Loaded: <b>${loaded}</b> &mdash; keep going!${skipNote}<br>
+        <span class="hint">FILE0001.GLB is still needed (it holds the palette and Bravo sector).<br>
+        For every level, load FILE0001&ndash;FILE0004. Drop more files or click here.</span>`);
+      return;
+    }
+    const raw = byId(palId).data;
+    palette = [];
+    for (let i = 0; i < 256; i++) palette.push([raw[i * 3] << 2, raw[i * 3 + 1] << 2, raw[i * 3 + 2] << 2]);
+
+    mapIndex = [];
+    for (const num of [...files.keys()].sort((a, b) => a - b))
+      files.get(num).glb.items.forEach((it, idx) => {
+        if (/^MAP\d+G\d_MAP$/.test(it.name)) mapIndex.push({ name: it.name, filenum: num, idx });
+      });
+    $("mapSelect").innerHTML = mapIndex.map(m => `<option>${m.name}</option>`).join("");
+    $("mapSelect").disabled = $("saveBtn").disabled = $("jsonExportBtn").disabled = !mapIndex.length;
+    fillBankSelects();
+    $("drop").classList.add("hide");
+    const missing = [1, 2, 3, 4].filter(n => !files.has(n));
+    setStatus(`${loaded} loaded, ${mapIndex.length} maps` +
+      (missing.length ? ` (add FILE000${missing.join("/")}.GLB for the rest)` : ""));
+    if (mapIndex.length) openMap(curMap && mapIndex.some(m => m.name === curMap) ? curMap : mapIndex[0].name);
+  }
+
+  function fillBankSelects() {
+    const banks = [0, 1, 2, 3].filter(b => itemId(`STARTG${b + 1}TILES`) >= 0);
+    $("tileBank").innerHTML = banks.map(b => `<option value="${b}">G${b + 1}</option>`).join("");
+    const sbanks = [0, 1, 2, 3].filter(b => itemId(`SPRITE${b + 1}_ITM`) >= 0);
+    const opts = sbanks.map(b => `<option value="${b}">G${b + 1}</option>`).join("");
+    $("spriteBank").innerHTML = opts;
+    $("libBank").innerHTML = opts;
+  }
+
+  // ---- map lifecycle ------------------------------------------------------
+  function level() { return levels.get(curMap); }
+
+  function commit(name) {
+    if (!dirty.has(name)) return;
+    const lv = levels.get(name);
+    lv.sprites = normalizeSpawnOrder(lv.sprites);   // engine spawn-cursor invariant
+    const entry = mapIndex.find(m => m.name === name);
+    files.get(entry.filenum).glb.items[entry.idx].data = buildMap(lv);
+  }
+
+  function openMap(name) {
+    if (curMap) commit(curMap);
+    curMap = name;
+    $("mapSelect").value = name;
+    if (!levels.has(name)) {
+      const entry = mapIndex.find(m => m.name === name);
+      levels.set(name, parseMap(files.get(entry.filenum).glb.items[entry.idx].data));
+    }
+    selSprite = -1; placing = false;
+    // default banks to what the map actually uses
+    const counts = {}, scounts = {};
+    for (const row of level().tiles) for (const c of row) counts[c.fgame] = (counts[c.fgame] || 0) + 1;
+    for (const s of level().sprites) scounts[s.game] = (scounts[s.game] || 0) + 1;
+    const top = o => Object.keys(o).sort((a, b) => o[b] - o[a])[0];
+    if (top(counts) !== undefined) $("tileBank").value = top(counts);
+    if (top(scounts) !== undefined) $("spriteBank").value = top(scounts);
+    drawTileGrid(); drawSpriteList(); updateProps();
+    redraw();
+    $("wrap").scrollTop = $("wrap").scrollHeight;   // level starts at the bottom
+    updateSaveBtn(); updateUndoBtn();
+  }
+
+  function markDirty() { dirty.add(curMap); updateSaveBtn(); }
+
+  function pushUndo() {
+    if (!undoStacks.has(curMap)) undoStacks.set(curMap, []);
+    const st = undoStacks.get(curMap);
+    st.push(JSON.stringify(level()));
+    if (st.length > 100) st.shift();
+    updateUndoBtn();
+  }
+
+  function undo() {
+    const st = undoStacks.get(curMap);
+    if (!st || !st.length) return;
+    levels.set(curMap, JSON.parse(st.pop()));
+    selSprite = -1;
+    markDirty(); updateProps(); redraw(); updateUndoBtn();
+  }
+
+  const updateUndoBtn = () => $("undoBtn").disabled = !(undoStacks.get(curMap) || []).length;
+
+  function affectedFiles() {
+    const nums = new Set();
+    for (const name of dirty) nums.add(mapIndex.find(m => m.name === name).filenum);
+    for (const bank of dirtyLibs) {
+      const id = itemId(`SPRITE${bank + 1}_ITM`);
+      if (id >= 0) nums.add(id >> 16);
+    }
+    return [...nums].sort((a, b) => a - b);
+  }
+
+  function updateSaveBtn() {
+    const nums = affectedFiles();
+    if (!nums.length) {
+      const entry = mapIndex.find(m => m.name === curMap);
+      $("saveBtn").textContent = entry ? `Download ${files.get(entry.filenum).filename}` : "Download GLB";
+      return;
+    }
+    $("saveBtn").textContent = `Download ${nums.map(n => files.get(n).filename).join(" + ")}` +
+      ` (${dirty.size + dirtyLibs.size} edited)`;
+  }
+
+  const setStatus = t => $("status").textContent = t;
+
+  // ---- rendering ----------------------------------------------------------
+  let rafPending = false;
+  function redraw() {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => { rafPending = false; paint(); });
+  }
+
+  function paint() {
+    canvas.style.width = 288 * zoom + "px";
+    canvas.style.height = 4800 * zoom + "px";
+    ctx.fillStyle = "#f0f";
+    ctx.fillRect(0, 0, 288, 4800);
+    const lv = level();
+    if (!lv) return;
+    for (let r = 0; r < MAP_ROWS; r++)
+      for (let c = 0; c < MAP_COLS; c++) {
+        const t = lv.tiles[r][c], p = tilePic(t.fgame, t.flats);
+        if (p) ctx.drawImage(p, c * TILE, r * TILE);
+      }
+    const order = lv.sprites.map((s, i) => i).sort((a, b) => {
+      const ga = bankData(spriteLibs, lv.sprites[a].game)[lv.sprites[a].slib]?.ground ? 0 : 1;
+      const gb = bankData(spriteLibs, lv.sprites[b].game)[lv.sprites[b].slib]?.ground ? 0 : 1;
+      return ga - gb;
+    });
+    const labels = $("labelsChk").checked;
+    ctx.font = "9px Consolas, monospace";
+    for (const i of order) {
+      const s = lv.sprites[i], g = spriteGfx(s.game, s.slib);
+      const x = s.x * TILE, y = s.y * TILE;
+      const w = g ? g.width : TILE, h = g ? g.height : TILE;
+      if (g) ctx.drawImage(g, x, y);
+      ctx.strokeStyle = LEVEL_COLORS[s.level] || "#888";
+      ctx.lineWidth = i === selSprite ? 2 : 1;
+      ctx.strokeRect(x + .5, y + .5, w - 1, h - 1);
+      if (i === selSprite) {
+        ctx.strokeStyle = "#fff";
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(x - 2.5, y - 2.5, w + 5, h + 5);
+        ctx.setLineDash([]);
+      }
+      if (labels) {
+        const lib = bankData(spriteLibs, s.game)[s.slib];
+        const tag = (lib ? lib.iname.replace(/(G\d)?_(PIC|BLK)$/, "") : "?" + s.slib);
+        ctx.fillStyle = "#000";
+        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]])
+          ctx.fillText(tag, x + 1 + dx, y + h + 8 + dy);
+        ctx.fillStyle = LEVEL_COLORS[s.level] || "#888";
+        ctx.fillText(tag, x + 1, y + h + 8);
+      }
+    }
+    // flight-path overlay for the selected sprite (waypoints are offsets
+    // from the spawn anchor, enemy.cpp:448/812)
+    if (selSprite >= 0) {
+      const s = lv.sprites[selSprite];
+      const lib = bankData(spriteLibs, s.game)[s.slib];
+      if (lib && lib.flighttype <= 2 && lib.numflight > 0) {
+        const ax = s.x * TILE + 16, ay = s.y * TILE + 16;
+        ctx.strokeStyle = "#3cdcdc";
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        for (let i = 0; i < Math.min(lib.numflight, 30); i++)
+          ctx.lineTo(ax + lib.flightx[i], ay + lib.flighty[i]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#3cdcdc";
+        for (let i = 0; i < Math.min(lib.numflight, 30); i++) {
+          ctx.beginPath();
+          ctx.arc(ax + lib.flightx[i], ay + lib.flighty[i], 2.5, 0, 7);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  // ---- tile picker ---------------------------------------------------------
+  const GRID_COLS = 8;
+  function drawTileGrid() {
+    const bank = +$("tileBank").value;
+    const start = bankData(tilesetStart, bank);
+    const flats = bankData(flatsLibs, bank);
+    const gc = $("tileGridCanvas");
+    if (start < 0) { gc.width = gc.height = 0; return; }
+    // count tiles: up to the ENDGnTILES label
+    const endId = itemId(`ENDG${bank + 1}TILES`);
+    const n = (endId & 0xFFFF) - (start & 0xFFFF);
+    gc.width = GRID_COLS * TILE;
+    gc.height = Math.ceil(n / GRID_COLS) * TILE;
+    gc.style.width = gc.width * 1.06 + "px"; // slight upscale to fill panel
+    const g = gc.getContext("2d");
+    g.fillStyle = "#111"; g.fillRect(0, 0, gc.width, gc.height);
+    for (let i = 0; i < n; i++) {
+      const p = pic(start + i);
+      const x = (i % GRID_COLS) * TILE, y = Math.floor(i / GRID_COLS) * TILE;
+      if (p) g.drawImage(p, x, y);
+      if (flats[i] && flats[i].linkflat !== i) {         // destructible marker
+        g.fillStyle = "#ff5050"; g.fillRect(x + 26, y + 2, 4, 4);
+      }
+      if (curTile && curTile.bank === bank && curTile.flats === i) {
+        g.strokeStyle = "#4da3ff"; g.lineWidth = 2;
+        g.strokeRect(x + 1, y + 1, TILE - 2, TILE - 2);
+      }
+    }
+    gc.dataset.count = n;
+  }
+
+  function selectTile(bank, flats) {
+    curTile = { bank, flats };
+    const p = tilePic(bank, flats);
+    const sc = $("tileSelCanvas"), g = sc.getContext("2d");
+    g.clearRect(0, 0, 32, 32);
+    if (p) g.drawImage(p, 0, 0);
+    const fl = bankData(flatsLibs, bank)[flats];
+    $("tileSelInfo").innerHTML = `tile <b>${flats}</b> bank G${bank + 1}` +
+      (fl && fl.linkflat !== flats
+        ? `<br>destructible &rarr; ${fl.linkflat}, hp ${fl.bonus}, $${fl.bounty}` : "");
+    drawTileGrid();
+  }
+
+  $("tileGridCanvas").addEventListener("mousedown", e => {
+    const r = e.target.getBoundingClientRect();
+    const scale = e.target.width / r.width;
+    const c = Math.floor((e.clientX - r.left) * scale / TILE);
+    const row = Math.floor((e.clientY - r.top) * scale / TILE);
+    const i = row * GRID_COLS + c;
+    if (i < +e.target.dataset.count) selectTile(+$("tileBank").value, i);
+  });
+  $("tileBank").addEventListener("change", drawTileGrid);
+
+  // ---- sprite library panel --------------------------------------------------
+  function drawSpriteList() {
+    const bank = +$("spriteBank").value;
+    const lib = bankData(spriteLibs, bank);
+    $("spriteList").innerHTML = lib.map((s, i) =>
+      `<div data-i="${i}"><span style="color:var(--dim)">${String(i).padStart(3)}</span> ` +
+      `${s.iname.replace(/(G\d)?_(PIC|BLK)$/, "")} <span style="color:var(--dim);margin-left:auto">hp ${s.hits}</span></div>`
+    ).join("");
+    $("placeBtn").disabled = true;
+  }
+
+  $("spriteList").addEventListener("click", e => {
+    const div = e.target.closest("div[data-i]");
+    if (!div) return;
+    [...$("spriteList").children].forEach(d => d.classList.toggle("sel", d === div));
+    const bank = +$("spriteBank").value, slib = +div.dataset.i;
+    curLibSel = { bank, slib };
+    const entry = bankData(spriteLibs, bank)[slib];
+    const g = spriteGfx(bank, slib);
+    const pc = $("spritePrevCanvas");
+    pc.width = g ? g.width : 32; pc.height = g ? g.height : 32;
+    if (g) pc.getContext("2d").drawImage(g, 0, 0);
+    $("spritePrevInfo").innerHTML =
+      `<b>${entry.iname}</b><br>hp ${entry.hits} &middot; $${entry.money}` +
+      `<br>${FLIGHT_NAMES[entry.flighttype] || "?"} &middot; ${entry.num_frames} frame(s)` +
+      `<br>${entry.numflight} waypoint(s)`;
+    $("placeBtn").disabled = false;
+  });
+  $("spriteBank").addEventListener("change", drawSpriteList);
+
+  $("placeBtn").addEventListener("click", () => {
+    placing = !placing;
+    $("placeBtn").textContent = placing ? "Placing... (Esc)" : "Place mode";
+  });
+
+  // ---- selected sprite properties ------------------------------------------
+  function updateProps() {
+    const lv = level(), s = lv && lv.sprites[selSprite];
+    $("props").style.display = s ? "" : "none";
+    if (!s) return;
+    const lib = bankData(spriteLibs, s.game);
+    $("propSlib").innerHTML = lib.map((l, i) =>
+      `<option value="${i}"${i === s.slib ? " selected" : ""}>${i} ${l.iname}</option>`).join("");
+    $("propLevel").value = LEVEL_NAMES[s.level] ? s.level : 4;
+    $("propLink").value = s.link;
+    $("propX").value = s.x; $("propY").value = s.y;
+  }
+
+  function propEdit(fn) {
+    const s = level().sprites[selSprite];
+    if (!s) return;
+    pushUndo(); fn(s); markDirty(); redraw();
+  }
+  $("propSlib").addEventListener("change", () => propEdit(s => s.slib = +$("propSlib").value));
+  $("propLevel").addEventListener("change", () => propEdit(s => s.level = +$("propLevel").value));
+  $("propLink").addEventListener("change", () => propEdit(s => s.link = +$("propLink").value));
+  $("propX").addEventListener("change", () => propEdit(s => s.x = Math.max(0, Math.min(8, +$("propX").value))));
+  $("propY").addEventListener("change", () => propEdit(s => s.y = Math.max(0, Math.min(MAX_SPAWN_ROW, +$("propY").value))));
+  $("delBtn").addEventListener("click", deleteSelected);
+
+  function deleteSelected() {
+    if (selSprite < 0) return;
+    pushUndo();
+    level().sprites.splice(selSprite, 1);
+    selSprite = -1;
+    markDirty(); updateProps(); redraw();
+  }
+
+  // ---- map canvas interaction ------------------------------------------------
+  function canvasCell(e) {
+    const r = canvas.getBoundingClientRect();
+    const px = (e.clientX - r.left) / zoom, py = (e.clientY - r.top) / zoom;
+    return { px, py, c: Math.max(0, Math.min(8, Math.floor(px / TILE))), r: Math.max(0, Math.min(149, Math.floor(py / TILE))) };
+  }
+
+  function spriteAt(px, py) {
+    const lv = level();
+    for (let i = lv.sprites.length - 1; i >= 0; i--) {
+      const s = lv.sprites[i], g = spriteGfx(s.game, s.slib);
+      const w = g ? g.width : TILE, h = g ? g.height : TILE;
+      if (px >= s.x * TILE && px < s.x * TILE + w && py >= s.y * TILE && py < s.y * TILE + h) return i;
+    }
+    return -1;
+  }
+
+  function paintCell(cell) {
+    const t = level().tiles[cell.r][cell.c];
+    if (t.flats === curTile.flats && t.fgame === curTile.bank) return;
+    t.flats = curTile.flats; t.fgame = curTile.bank;
+    markDirty(); redraw();
+  }
+
+  canvas.addEventListener("mousedown", e => {
+    if (!level()) return;
+    const cell = canvasCell(e);
+    if (e.button === 2) return;                     // handled in contextmenu
+    if (mode === "tiles") {
+      if (!curTile) { setStatus("select a tile first"); return; }
+      pushUndo(); painting = true; paintCell(cell);
+    } else {
+      if (placing && curLibSel) {
+        pushUndo();
+        level().sprites.push({ link: 1, slib: curLibSel.slib, x: cell.c,
+          y: Math.min(cell.r, MAX_SPAWN_ROW), game: curLibSel.bank, level: 4 });
+        selSprite = level().sprites.length - 1;
+        markDirty(); updateProps(); redraw();
+        return;
+      }
+      selSprite = spriteAt(cell.px, cell.py);
+      if (selSprite >= 0) { dragging = true; pushUndo(); }
+      updateProps(); redraw();
+    }
+  });
+
+  canvas.addEventListener("mousemove", e => {
+    if (painting) paintCell(canvasCell(e));
+    else if (dragging && selSprite >= 0) {
+      const cell = canvasCell(e), s = level().sprites[selSprite];
+      const r = Math.min(cell.r, MAX_SPAWN_ROW);
+      if (s.x !== cell.c || s.y !== r) { s.x = cell.c; s.y = r; markDirty(); updateProps(); redraw(); }
+    }
+  });
+  window.addEventListener("mouseup", () => { painting = dragging = false; });
+
+  canvas.addEventListener("contextmenu", e => {       // eyedropper
+    e.preventDefault();
+    if (!level()) return;
+    const cell = canvasCell(e), t = level().tiles[cell.r][cell.c];
+    $("tileBank").value = t.fgame;
+    drawTileGrid(); selectTile(t.fgame, t.flats);
+    if (mode !== "tiles") switchTab("tiles");
+  });
+
+  window.addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.key === "Escape") {
+      $("help").classList.add("hide");
+      placing = false; $("placeBtn").textContent = "Place mode";
+    }
+    else if (e.key === "Delete" && mode === "sprites") deleteSelected();
+    else if (e.ctrlKey && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      mode === "library" ? popLibUndo() : undo();
+    }
+  });
+
+  // ---- Library tab: edit SPRITE records + flight paths -----------------------
+  let libSel = -1;                    // index into current lib bank
+  const dirtyLibs = new Set();        // bank numbers with edits
+  const libUndo = new Map();          // bank -> [json snapshots]
+  const LIB_FIELDS = [                // curated editable stats
+    ["hits", "hit points"], ["money", "bounty $"], ["movespeed", "move speed"],
+    ["shootframe", "shoot rate"], ["shootcnt", "shots/burst"], ["shootstart", "shoot delay"],
+    ["frame_rate", "anim rate"], ["repos", "loop-back wpt"],
+    ["shadow", "shadow 0/1"], ["bossflag", "boss flag"],
+  ];
+
+  const curLib = () => bankData(spriteLibs, +$("libBank").value);
+  const curEntry = () => (libSel >= 0 ? curLib()[libSel] : null);
+
+  function pushLibUndo() {
+    const bank = +$("libBank").value;
+    if (!libUndo.has(bank)) libUndo.set(bank, []);
+    const st = libUndo.get(bank);
+    st.push(JSON.stringify(curLib()));
+    if (st.length > 100) st.shift();
+  }
+
+  function popLibUndo() {
+    const bank = +$("libBank").value;
+    const st = libUndo.get(bank);
+    if (!st || !st.length) return;
+    spriteLibs.set(bank, JSON.parse(st.pop()));
+    dirtyLibs.add(bank);
+    drawLibList(); selectLibEntry(Math.min(libSel, curLib().length - 1));
+    updateSaveBtn(); redraw();
+  }
+
+  function markLibDirty() {
+    dirtyLibs.add(+$("libBank").value);
+    updateSaveBtn(); redraw();
+  }
+
+  function drawLibList() {
+    const lib = curLib();
+    $("libList").innerHTML = lib.map((s, i) =>
+      `<div data-i="${i}"${i === libSel ? ' class="sel"' : ""}>` +
+      `<span style="color:var(--dim)">${String(i).padStart(3)}</span> ` +
+      `${s.iname.replace(/(G\d)?_(PIC|BLK)$/, "")}</div>`).join("");
+    $("dupBtn").disabled = libSel < 0;
+  }
+
+  function selectLibEntry(i) {
+    libSel = i;
+    const s = curEntry();
+    $("libForm").style.display = $("pathBox").style.display = s ? "" : "none";
+    $("dupBtn").disabled = !s;
+    drawLibList();
+    if (!s) return;
+    $("libIname").value = s.iname;
+    checkIname();
+    $("libNums").innerHTML = LIB_FIELDS.map(([f, label]) =>
+      `<label>${label}<input type="number" data-f="${f}" value="${s[f]}"></label>`).join("") +
+      `<label>flight<select data-f="flighttype">` +
+      FLIGHT_NAMES.map((n, v) => `<option value="${v}"${v === s.flighttype ? " selected" : ""}>${n}</option>`).join("") +
+      `</select></label>`;
+    drawPath();
+  }
+
+  function checkIname() {
+    const ok = itemId($("libIname").value) >= 0;
+    $("libInameOk").textContent = ok ? "✓" : "✗ not found";
+    $("libInameOk").style.color = ok ? "#3cdc3c" : "#ff5050";
+    return ok;
+  }
+
+  $("libList").addEventListener("click", e => {
+    const div = e.target.closest("div[data-i]");
+    if (div) selectLibEntry(+div.dataset.i);
+  });
+  $("libBank").addEventListener("change", () => { libSel = -1; selectLibEntry(-1); });
+
+  $("libIname").addEventListener("change", () => {
+    const s = curEntry();
+    if (!s) return;
+    pushLibUndo();
+    s.iname = $("libIname").value.toUpperCase().slice(0, 15);
+    $("libIname").value = s.iname;
+    checkIname(); markLibDirty(); drawLibList();
+  });
+
+  $("libNums").addEventListener("change", e => {
+    const f = e.target.dataset.f, s = curEntry();
+    if (!f || !s) return;
+    pushLibUndo();
+    s[f] = +e.target.value | 0;
+    if (f === "flighttype") drawPath();
+    markLibDirty();
+  });
+
+  $("dupBtn").addEventListener("click", () => {
+    const s = curEntry();
+    if (!s) return;
+    pushLibUndo();
+    curLib().push(JSON.parse(JSON.stringify(s)));
+    markLibDirty();
+    selectLibEntry(curLib().length - 1);
+    setStatus(`duplicated ${s.iname} as entry ${libSel} - engine picks up the new count automatically`);
+  });
+
+  // ---- flight path canvas ------------------------------------------------------
+  const pcv = $("pathCanvas"), pctx = pcv.getContext("2d");
+  let ptf = { sc: 1, ox: 0, oy: 0 };          // world->canvas transform
+  let dragWpt = -1;
+
+  const wpts = () => {
+    const s = curEntry();
+    return s ? s.flightx.slice(0, Math.max(0, Math.min(s.numflight, 30)))
+      .map((x, i) => [x, s.flighty[i]]) : [];
+  };
+  const w2c = ([x, y]) => [x * ptf.sc + ptf.ox, y * ptf.sc + ptf.oy];
+  const c2w = (x, y) => [Math.round((x - ptf.ox) / ptf.sc), Math.round((y - ptf.oy) / ptf.sc)];
+
+  function drawPath() {
+    const s = curEntry();
+    if (!s) return;
+    const pts = [[0, 0], ...wpts()];
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const span = Math.max(64, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    ptf.sc = Math.min((pcv.width - 30) / span, (pcv.height - 30) / span, 1.5);
+    ptf.ox = pcv.width / 2 - (Math.min(...xs) + Math.max(...xs)) / 2 * ptf.sc;
+    ptf.oy = pcv.height / 2 - (Math.min(...ys) + Math.max(...ys)) / 2 * ptf.sc;
+
+    pctx.fillStyle = "#0b0c0f";
+    pctx.fillRect(0, 0, pcv.width, pcv.height);
+    const grounded = s.flighttype >= 3;
+    $("pathInfo").textContent = grounded
+      ? `${FLIGHT_NAMES[s.flighttype]}: waypoints unused`
+      : `${s.numflight} waypoints, ${FLIGHT_NAMES[s.flighttype]}`;
+
+    pctx.strokeStyle = grounded ? "#444" : "#3cdcdc";
+    pctx.beginPath();
+    pts.forEach((p, i) => { const [x, y] = w2c(p); i ? pctx.lineTo(x, y) : pctx.moveTo(x, y); });
+    pctx.stroke();
+    pts.forEach((p, i) => {
+      const [x, y] = w2c(p);
+      if (i === 0) {                                    // spawn anchor
+        pctx.fillStyle = "#e8a33d";
+        pctx.font = "12px sans-serif";
+        pctx.fillText("★", x - 5, y + 4);
+      } else {
+        pctx.fillStyle = i - 1 === s.repos && s.flighttype === 0 ? "#e8a33d" : "#3cdcdc";
+        pctx.beginPath(); pctx.arc(x, y, 4, 0, 7); pctx.fill();
+        pctx.fillStyle = "#0b0c0f";
+        pctx.font = "8px Consolas";
+        pctx.fillText(i - 1, x - (i > 10 ? 4 : 2), y + 3);
+      }
+    });
+  }
+
+  function wptAt(cx, cy) {
+    const s = curEntry();
+    if (!s) return -1;
+    const pts = wpts();
+    for (let i = pts.length - 1; i >= 0; i--) {
+      const [x, y] = w2c(pts[i]);
+      if (Math.hypot(cx - x, cy - y) <= 7) return i;
+    }
+    return -1;
+  }
+
+  function pathMouse(e) {
+    const r = pcv.getBoundingClientRect();
+    return [(e.clientX - r.left) * pcv.width / r.width, (e.clientY - r.top) * pcv.height / r.height];
+  }
+
+  pcv.addEventListener("mousedown", e => {
+    const s = curEntry();
+    if (!s || e.button === 2) return;
+    const [cx, cy] = pathMouse(e);
+    const hit = wptAt(cx, cy);
+    pushLibUndo();
+    if (hit >= 0) dragWpt = hit;
+    else if (s.numflight < 30) {                        // append waypoint
+      const [wx, wy] = c2w(cx, cy);
+      s.flightx[s.numflight] = wx; s.flighty[s.numflight] = wy;
+      s.numflight++;
+      dragWpt = s.numflight - 1;
+      markLibDirty(); drawPath();
+    }
+  });
+  pcv.addEventListener("mousemove", e => {
+    const s = curEntry();
+    if (dragWpt < 0 || !s) return;
+    const [cx, cy] = pathMouse(e);
+    [s.flightx[dragWpt], s.flighty[dragWpt]] = c2w(cx, cy);
+    markLibDirty(); drawPath();
+  });
+  window.addEventListener("mouseup", () => dragWpt = -1);
+  pcv.addEventListener("contextmenu", e => {
+    e.preventDefault();
+    const s = curEntry();
+    if (!s) return;
+    const [cx, cy] = pathMouse(e);
+    const hit = wptAt(cx, cy);
+    if (hit >= 0 && s.numflight > 0) {
+      pushLibUndo();
+      s.flightx.splice(hit, 1); s.flightx.push(0);
+      s.flighty.splice(hit, 1); s.flighty.push(0);
+      s.numflight--;
+      if (s.repos >= s.numflight) s.repos = Math.max(0, s.numflight - 1);
+      markLibDirty(); drawPath(); selectLibEntry(libSel);
+    }
+  });
+
+  function commitLib(bank) {
+    if (!dirtyLibs.has(bank)) return;
+    const id = itemId(`SPRITE${bank + 1}_ITM`);
+    if (id >= 0) byId(id).data = buildSpriteLib(bankData(spriteLibs, bank));
+  }
+
+  // ---- tabs / header ----------------------------------------------------------
+  function switchTab(m) {
+    mode = m;
+    for (const [tab, panel, key] of [["tabTiles", "panelTiles", "tiles"],
+      ["tabSprites", "panelSprites", "sprites"], ["tabLib", "panelLib", "library"]]) {
+      $(tab).classList.toggle("active", m === key);
+      $(panel).classList.toggle("active", m === key);
+    }
+    placing = false; $("placeBtn").textContent = "Place mode";
+    if (m === "library") { drawLibList(); if (libSel >= 0) drawPath(); }
+  }
+  $("tabTiles").addEventListener("click", () => switchTab("tiles"));
+  $("tabSprites").addEventListener("click", () => switchTab("sprites"));
+  $("tabLib").addEventListener("click", () => switchTab("library"));
+
+  $("mapSelect").addEventListener("change", () => openMap($("mapSelect").value));
+  $("zoomSelect").addEventListener("change", () => { zoom = +$("zoomSelect").value; redraw(); });
+  $("labelsChk").addEventListener("change", redraw);
+  $("undoBtn").addEventListener("click", undo);
+
+  function download(bytes, filename) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  $("saveBtn").addEventListener("click", () => {
+    for (const name of dirty) commit(name);
+    for (const bank of dirtyLibs) commitLib(bank);
+    let nums = affectedFiles();
+    if (!nums.length) nums = [mapIndex.find(m => m.name === curMap).filenum];
+    nums.forEach((n, i) => setTimeout(() =>
+      download(buildGlb(files.get(n).glb), files.get(n).filename), i * 400));
+    setStatus(`saved ${nums.map(n => files.get(n).filename).join(", ")} - back up originals before overwriting!`);
+  });
+
+  $("jsonExportBtn").addEventListener("click", () => {
+    const m = level();
+    m.sprites = normalizeSpawnOrder(m.sprites);
+    const out = {
+      name: curMap, rows: MAP_ROWS, cols: MAP_COLS, tiles: m.tiles,
+      sprites: m.sprites.map(s => ({ ...s, level_name: LEVEL_NAMES[s.level] || "unused" })),
+    };
+    download(new TextEncoder().encode(JSON.stringify(out, null, 1)), curMap.toLowerCase().replace(/_map$/, "") + ".json");
+  });
+
+  $("jsonInput").addEventListener("change", async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const m = JSON.parse(await f.text());
+      if (!m.tiles || !m.sprites) throw new Error("missing tiles/sprites");
+      const target = (m.name && mapIndex.some(x => x.name === m.name)) ? m.name : curMap;
+      pushUndo();
+      levels.set(target, { rows: MAP_ROWS, cols: MAP_COLS, tiles: m.tiles, sprites: m.sprites.map(({ level_name, ...s }) => s) });
+      dirty.add(target);
+      openMap(target);
+      setStatus(`imported ${f.name} into ${target}`);
+    } catch (err) { setStatus(`import failed: ${err.message}`); }
+    e.target.value = "";
+  });
+
+  $("fileInput").addEventListener("change", e => { loadFiles(e.target.files); e.target.value = ""; });
+  $("drop").addEventListener("click", () => $("fileInput").click());
+  $("helpBtn").addEventListener("click", () => $("help").classList.remove("hide"));
+  $("dropHelp").addEventListener("click", e => {
+    e.preventDefault(); e.stopPropagation();          // don't trigger file browse
+    $("help").classList.remove("hide");
+  });
+  $("helpClose").addEventListener("click", () => $("help").classList.add("hide"));
+  $("help").addEventListener("click", e => { if (e.target === $("help")) $("help").classList.add("hide"); });
+  window.addEventListener("dragover", e => e.preventDefault());
+  window.addEventListener("drop", e => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
+  });
+  window.addEventListener("beforeunload", e => { if (dirty.size || dirtyLibs.size) e.preventDefault(); });
+
+})();
+</script>
+</body>
+</html>

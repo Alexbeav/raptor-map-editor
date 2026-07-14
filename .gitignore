@@ -1,0 +1,11 @@
+# NEVER commit game data
+*.GLB
+*.glb
+glbs/
+
+# tool output
+*.png
+!docs/*.png
+renders/
+__pycache__/
+*.json

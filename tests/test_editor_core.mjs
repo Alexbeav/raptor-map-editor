@@ -1,0 +1,97 @@
+// Smoke test for the CORE data layer inside editor.html, run against the real
+// game files:  node test_editor_core.mjs ["..\\glb files"]
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+// point at a folder containing your own FILE000n.GLB files (never committed)
+const dataDir = process.argv[2] ?? join(here, "..", "glbs");
+
+const html = readFileSync(join(here, "..", "index.html"), "utf8");
+const core = html.match(/\/\* =+ CORE ==[\s\S]*?\*\/([\s\S]*?)\/\* =+ END CORE/);
+if (!core) throw new Error("CORE block not found in editor.html");
+const exports_ = {};
+new Function("exports", core[1] +
+  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats, decodePic, spawnGroups, normalizeSpawnOrder});"
+)(exports_);
+const { parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats,
+  decodePic, spawnGroups, normalizeSpawnOrder } = exports_;
+
+let failures = 0;
+const check = (label, ok) => { console.log(`${ok ? "PASS" : "FAIL"}  ${label}`); if (!ok) failures++; };
+const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+// GLB round trip on every archive
+for (let n = 0; n <= 4; n++) {
+  const raw = new Uint8Array(readFileSync(join(dataDir, `FILE000${n}.GLB`)));
+  const glb = parseGlb(raw.buffer);
+  check(`FILE000${n}.GLB parse+build byte-identical (${glb.items.length} items)`,
+    eq(buildGlb(glb), raw));
+}
+
+const raw1 = new Uint8Array(readFileSync(join(dataDir, "FILE0001.GLB")));
+const glb1 = parseGlb(raw1.buffer);
+const byName = name => glb1.items.find(it => it.name === name);
+
+// map parse/build
+const mapItem = byName("MAP1G1_MAP");
+const m = parseMap(mapItem.data);
+check("MAP1G1_MAP: 299 sprites", m.sprites.length === 299);
+check("MAP1G1_MAP: first cell flats=116", m.tiles[0][0].flats === 116);
+check("MAP1G1_MAP: buildMap round trip", eq(buildMap(m), mapItem.data));
+
+// mutating edit survives rebuild
+m.sprites.pop();
+m.tiles[149][0].flats = 5;
+const m2 = parseMap(buildMap(m));
+check("edited map: 298 sprites, tile edit kept",
+  m2.sprites.length === 298 && m2.tiles[149][0].flats === 5);
+
+// spawn-order invariant (engine spawn cursor, enemy.cpp:691)
+const fresh = parseMap(mapItem.data);
+check("normalizeSpawnOrder is a no-op on original data",
+  JSON.stringify(normalizeSpawnOrder(fresh.sprites)) === JSON.stringify(fresh.sprites));
+const withTail = [...fresh.sprites, { link: 1, slib: 11, x: 4, y: 130, game: 0, level: 3 }];
+const fixed = normalizeSpawnOrder(withTail);
+const heads = spawnGroups(fixed).map(g => g[0].y);
+check("appended sprite is sorted into spawn position",
+  fixed[fixed.length - 1].y !== 130 && heads.every((y, i) => i === 0 || heads[i - 1] >= y));
+
+// sprite lib + flats
+const lib = parseSpriteLib(byName("SPRITE1_ITM").data);
+check("SPRITE1_ITM: 131 entries, [0]=TARGT1G1_PIC hp40",
+  lib.length === 131 && lib[0].iname === "TARGT1G1_PIC" && lib[0].hits === 40);
+
+// full SPRITE codec: byte-identical round trip on all 4 banks
+for (let bank = 0; bank < 4; bank++) {
+  const fnum = [1, 2, 3, 4][bank];
+  const raw = new Uint8Array(readFileSync(join(dataDir, `FILE000${fnum}.GLB`)));
+  const g = parseGlb(raw.buffer);
+  const item = g.items.find(it => it.name === `SPRITE${bank + 1}_ITM`);
+  const parsed = parseSpriteLib(item.data);
+  check(`SPRITE${bank + 1}_ITM full codec round trip (${parsed.length} entries)`,
+    eq(buildSpriteLib(parsed), item.data));
+}
+
+// duplicate-entry grows the lib by exactly one record
+const grown = buildSpriteLib([...lib, JSON.parse(JSON.stringify(lib[13]))]);
+check("duplicated entry appends one 528-byte record",
+  grown.length === (lib.length + 1) * 528 &&
+  parseSpriteLib(grown)[lib.length].iname === lib[13].iname);
+const flats = parseFlats(byName("FLATSG1_ITM").data);
+check("FLATSG1_ITM: 672 entries", flats.length === 672);
+
+// graphics decode (palette + GPIC tile + GSPRITE enemy)
+const pal = [];
+const praw = byName("PALETTE_DAT").data;
+for (let i = 0; i < 256; i++) pal.push([praw[i * 3] << 2, praw[i * 3 + 1] << 2, praw[i * 3 + 2] << 2]);
+const startIdx = glb1.items.findIndex(it => it.name === "STARTG1TILES");
+const tile = decodePic(glb1.items[startIdx + 1].data, pal);
+check("tile decode: 32x32 GPIC, opaque", tile && tile.w === 32 && tile.h === 32 && tile.rgba[3] === 255);
+const ship = decodePic(byName(lib[13].iname).data, pal);   // SHIP01G1_PIC, GSPRITE
+check(`enemy decode: ${lib[13].iname} ${ship?.w}x${ship?.h} GSPRITE`,
+  ship && ship.w > 0 && ship.h > 0 && ship.rgba.some((v, i) => i % 4 === 3 && v === 255));
+
+console.log(failures ? `\n${failures} FAILURE(S)` : "\nall tests passed");
+process.exit(failures ? 1 : 0);
