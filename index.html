@@ -110,6 +110,7 @@
   <select id="mapSelect" disabled></select>
   <select id="zoomSelect"><option value="1">1&times;</option><option value="2" selected>2&times;</option><option value="3">3&times;</option></select>
   <label><input type="checkbox" id="labelsChk" checked> labels</label>
+  <label><input type="checkbox" id="spritesChk" checked> sprites</label>
   <button id="undoBtn" disabled>Undo</button>
   <button id="jsonExportBtn" disabled>Export JSON</button>
   <label class="file">Import JSON<input type="file" id="jsonInput" accept=".json"></label>
@@ -132,6 +133,10 @@
       <div id="tileSel">
         <canvas id="tileSelCanvas" width="32" height="32"></canvas>
         <div id="tileSelInfo" class="hint">no tile selected</div>
+      </div>
+      <div class="row">
+        <button id="fillBtn" class="grow" title="fill every tile of this map with the selected tile">Fill map with tile</button>
+        <button id="blankBtn" title="blank this map: fill with the selected tile and remove ALL sprites">Blank map</button>
       </div>
       <div class="scroll" id="tileGrid"><canvas id="tileGridCanvas"></canvas></div>
     </div>
@@ -696,6 +701,7 @@ if (typeof document !== "undefined") (function initUI() {
         const t = lv.tiles[r][c], p = tilePic(t.fgame, t.flats);
         if (p) ctx.drawImage(p, c * TILE, r * TILE);
       }
+    if (!$("spritesChk").checked) return;       // tile-only view
     const order = lv.sprites.map((s, i) => i).sort((a, b) => {
       const ga = bankData(spriteLibs, lv.sprites[a].game)[lv.sprites[a].slib]?.ground ? 0 : 1;
       const gb = bankData(spriteLibs, lv.sprites[b].game)[lv.sprites[b].slib]?.ground ? 0 : 1;
@@ -1185,6 +1191,24 @@ if (typeof document !== "undefined") (function initUI() {
   $("mapSelect").addEventListener("change", () => openMap($("mapSelect").value));
   $("zoomSelect").addEventListener("change", () => { zoom = +$("zoomSelect").value; redraw(); });
   $("labelsChk").addEventListener("change", redraw);
+  $("spritesChk").addEventListener("change", redraw);
+
+  function fillMap(clearSprites) {
+    if (!level()) return;
+    if (!curTile) { setStatus("pick a tile first (Tiles tab)"); return; }
+    pushUndo();
+    for (const row of level().tiles)
+      for (const cell of row) { cell.flats = curTile.flats; cell.fgame = curTile.bank; }
+    if (clearSprites) { level().sprites = []; selSprite = -1; updateProps(); }
+    markDirty(); redraw();
+    setStatus(clearSprites ? `blanked ${curMap} (tile ${curTile.flats}, sprites cleared)`
+      : `filled ${curMap} with tile ${curTile.flats}`);
+  }
+  $("fillBtn").addEventListener("click", () => fillMap(false));
+  $("blankBtn").addEventListener("click", () => {
+    if (level() && confirm("Blank this map?\n\nFills every tile with the selected tile and removes ALL sprites. Undo with Ctrl+Z."))
+      fillMap(true);
+  });
   $("undoBtn").addEventListener("click", undo);
 
   function download(bytes, filename) {
