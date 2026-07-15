@@ -7,6 +7,7 @@ Commands:
   extract <glb-file> [-o DIR]         Dump every item to DIR (default: <name>.extracted/)
   map2json <data-dir> <MAPnGn> [-o F] Export a level to editable JSON
   json2map <data-dir> <json> [-o F]   Rebuild the map item and write a patched GLB
+  mod2glb <data-dir> <mod> [-o DIR]    Apply a .rapmod into a new output directory
   sprites <data-dir> <game 1-4>       List a sector's sprite library (name, hp, money...)
 
 Examples:
@@ -14,6 +15,7 @@ Examples:
   python glbtool.py verify "..\\glb files\\FILE0001.GLB"
   python glbtool.py map2json "..\\glb files" MAP1G1 -o map1g1.json
   python glbtool.py json2map "..\\glb files" map1g1.json -o FILE0001.GLB
+  python glbtool.py mod2glb "..\\glb files" example.rapmod -o patched
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ import sys
 from pathlib import Path
 
 from raptor_glb import (GTYPE_PIC, GTYPE_SPRITE, GlbFile, GlbItem, GlbSet,
+                        apply_rapmod,
                         build_map, build_sprite_lib, encode_pic, load_palette,
                         normalize_spawn_order, parse_map, parse_pic,
                         parse_sprite_lib, quantize_rgba)
@@ -91,6 +94,31 @@ def cmd_json2map(args):
     out = Path(args.output or f"FILE{filenum:04}.GLB")
     out.write_bytes(glb.build())
     print(f"replaced {name} ({len(data)} bytes, {len(m['sprites'])} sprites) -> {out}")
+
+
+def cmd_mod2glb(args):
+    mod_path = Path(args.mod)
+    try:
+        mod = json.loads(mod_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        sys.exit(f"cannot read {mod_path}: {exc}")
+    glbs = GlbSet(args.datadir)
+    try:
+        touched = apply_rapmod(glbs, mod)
+        outputs = {num: glbs.files[num].build() for num in touched}
+    except (KeyError, TypeError, ValueError) as exc:
+        sys.exit(f"mod rejected: {exc}")
+
+    outdir = Path(args.output or f"{mod_path.stem}-patched")
+    if outdir.exists() and not outdir.is_dir():
+        sys.exit(f"output path is not a directory: {outdir}")
+    outdir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for num in sorted(outputs):
+        path = outdir / f"FILE{num:04}.GLB"
+        path.write_bytes(outputs[num])
+        written.append(path.name)
+    print(f"applied {mod_path.name}: {', '.join(written)} -> {outdir}")
 
 
 def cmd_lib2json(args):
@@ -177,6 +205,7 @@ def main():
     p = sub.add_parser("extract"); p.add_argument("glb"); p.add_argument("-o", "--output"); p.set_defaults(func=cmd_extract)
     p = sub.add_parser("map2json"); p.add_argument("datadir"); p.add_argument("map"); p.add_argument("-o", "--output"); p.set_defaults(func=cmd_map2json)
     p = sub.add_parser("json2map"); p.add_argument("datadir"); p.add_argument("json"); p.add_argument("-o", "--output"); p.set_defaults(func=cmd_json2map)
+    p = sub.add_parser("mod2glb"); p.add_argument("datadir"); p.add_argument("mod"); p.add_argument("-o", "--output"); p.set_defaults(func=cmd_mod2glb)
     p = sub.add_parser("sprites"); p.add_argument("datadir"); p.add_argument("game", type=int, choices=range(1, 5)); p.set_defaults(func=cmd_sprites)
     p = sub.add_parser("pic2png"); p.add_argument("datadir"); p.add_argument("item"); p.add_argument("-o", "--output"); p.set_defaults(func=cmd_pic2png)
     p = sub.add_parser("png2pic"); p.add_argument("datadir"); p.add_argument("png"); p.add_argument("--name", required=True); p.add_argument("--type", choices=["sprite", "pic"], default="sprite"); p.add_argument("--file", type=int, default=1); p.add_argument("-o", "--output"); p.set_defaults(func=cmd_png2pic)

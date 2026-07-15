@@ -14,6 +14,10 @@ Covers:
 """
 from __future__ import annotations
 
+import base64
+import copy
+import hashlib
+import re
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -358,6 +362,237 @@ def build_flats(flats: list[dict]) -> bytes:
             raise ValueError(f"flat {i} is missing {exc.args[0]}") from exc
         struct.pack_into("<ihh", out, i * FLATS_SIZE, linkflat, bonus, bounty)
     return bytes(out)
+
+
+# --------------------------------------------------------------------------
+# RAPMOD v1 patches
+# --------------------------------------------------------------------------
+
+def validate_mus(data: bytes) -> dict:
+    """Validate the structural subset of DMX MUS consumed by rapmod v1."""
+    if not isinstance(data, bytes) or len(data) < 16 or data[:4] != b"MUS\x1a":
+        raise ValueError("not a DMX MUS file (expected MUS\\x1A header)")
+    score_len, score_start, channels = struct.unpack_from("<HHH", data, 4)
+    if score_start < 16 or score_start + score_len > len(data):
+        raise ValueError("MUS score points outside the file")
+    pos, end, ended = score_start, score_start + score_len, False
+
+    def take(count: int) -> bytes:
+        nonlocal pos
+        if pos + count > end:
+            raise ValueError("MUS event is truncated")
+        value = data[pos:pos + count]
+        pos += count
+        return value
+
+    while pos < end and not ended:
+        event = take(1)[0]
+        event_type = (event >> 4) & 7
+        if event_type in (0, 2, 3):
+            take(1)
+        elif event_type == 1:
+            note = take(1)[0]
+            if note & 0x80:
+                take(1)
+        elif event_type == 4:
+            take(2)
+        elif event_type == 6:
+            ended = True
+        else:
+            raise ValueError(f"unsupported MUS event type {event_type}")
+        if not ended and event & 0x80:
+            for _ in range(6):
+                value = take(1)[0]
+                if not value & 0x80:
+                    break
+            else:
+                raise ValueError("MUS delay value is too long")
+    if not ended:
+        raise ValueError("MUS score has no end event")
+    return {"scoreLen": score_len, "scoreStart": score_start, "channels": channels}
+
+
+def _patch_object(value, allowed: set[str], label: str) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"{label} contains unknown field {sorted(unknown)[0]}")
+    return value
+
+
+def _apply_map_patch(base: dict, patch: dict) -> dict:
+    patch = _patch_object(patch, {"tiles", "spriteGroups"}, "map patch")
+    result = copy.deepcopy(base)
+    if "tiles" in patch:
+        if not isinstance(patch["tiles"], list):
+            raise ValueError("map patch tiles must be an array")
+        for i, edit in enumerate(patch["tiles"]):
+            edit = _patch_object(edit, {"r", "c", "value"}, f"tile edit {i}")
+            row = _integer(edit.get("r"), f"tile edit {i} row", 0, MAP_ROWS - 1)
+            col = _integer(edit.get("c"), f"tile edit {i} column", 0, MAP_COLS - 1)
+            if not isinstance(edit.get("value"), dict):
+                raise ValueError(f"tile edit {i} value must be an object")
+            result["tiles"][row][col] = copy.deepcopy(edit["value"])
+    if "spriteGroups" in patch:
+        if not isinstance(patch["spriteGroups"], list):
+            raise ValueError("map patch spriteGroups must be an array")
+        groups = spawn_groups(result["sprites"])
+        operations = []
+        for i, operation in enumerate(patch["spriteGroups"]):
+            operation = _patch_object(operation, {"at", "delete", "insert"},
+                                      f"sprite-group operation {i}")
+            at = _integer(operation.get("at"), f"sprite-group operation {i} at", 0, len(groups))
+            delete = _integer(operation.get("delete"), f"sprite-group operation {i} delete",
+                              0, len(groups) - at)
+            insert = operation.get("insert")
+            if not isinstance(insert, list) or any(not isinstance(group, list) for group in insert):
+                raise ValueError(f"sprite-group operation {i} insert must be an array of groups")
+            operations.append((at, delete, copy.deepcopy(insert)))
+        for at, delete, insert in sorted(operations, key=lambda op: -op[0]):
+            groups[at:at + delete] = insert
+        result["sprites"] = [sprite for group in groups for sprite in group]
+    return validate_map(result)
+
+
+def _apply_record_patch(base: list[dict], patch: dict) -> list[dict]:
+    patch = _patch_object(patch, {"fields", "append"}, "record-bank patch")
+    result = copy.deepcopy(base)
+    if "fields" in patch:
+        if not isinstance(patch["fields"], list):
+            raise ValueError("record-bank fields must be an array")
+        for i, edit in enumerate(patch["fields"]):
+            edit = _patch_object(edit, {"index", "set"}, f"record edit {i}")
+            index = _integer(edit.get("index"), f"record edit {i} index", 0, len(result) - 1)
+            values = _patch_object(edit.get("set"), set(result[index]), f"record edit {i} set")
+            result[index].update(copy.deepcopy(values))
+    if "append" in patch:
+        if not isinstance(patch["append"], list):
+            raise ValueError("record-bank append must be an array")
+        result.extend(copy.deepcopy(patch["append"]))
+    return result
+
+
+def apply_rapmod(glbs: GlbSet, mod: dict) -> set[int]:
+    """Validate a rapmod fully, then apply it to an in-memory GlbSet.
+
+    Returns the archive numbers touched. No GLB item is mutated if validation
+    fails, which lets callers build every output before writing any file.
+    """
+    supported = {"format", "version", "requires", "maps", "libs", "flats", "music"}
+    if not isinstance(mod, dict):
+        raise ValueError("rapmod must be an object")
+    unknown = set(mod) - supported
+    if unknown:
+        raise ValueError(f"rapmod section {sorted(unknown)[0]} is not supported; the mod may have been made with a newer editor")
+    if mod.get("format") != "rapmod":
+        raise ValueError("not a rapmod file")
+    if mod.get("version") != 1:
+        version = mod.get("version")
+        if isinstance(version, int) and version > 1:
+            raise ValueError("this mod was made with a newer editor")
+        raise ValueError(f"unsupported rapmod version {version}")
+    requires = mod.get("requires")
+    if not isinstance(requires, dict):
+        raise ValueError("rapmod requires must be an object")
+
+    verified: dict[str, bytes] = {}
+
+    def require_base(name: str) -> bytes:
+        if name not in requires:
+            raise ValueError(f"{name} patch is missing its base hash")
+        try:
+            data = glbs.by_name(name).data
+        except KeyError as exc:
+            raise ValueError(f"{name} is not available in the loaded base archives") from exc
+        expected = requires[name]
+        actual = "sha256:" + hashlib.sha256(data).hexdigest()
+        if not isinstance(expected, str) or actual != expected:
+            raise ValueError(f"{name} base hash does not match this game data")
+        verified[name] = data
+        return data
+
+    prepared_libs: dict[int, list[dict]] = {}
+    prepared_flats: dict[int, list[dict]] = {}
+    for bank in range(4):
+        try:
+            prepared_libs[bank] = parse_sprite_lib(glbs.by_name(f"SPRITE{bank + 1}_ITM").data)
+        except KeyError:
+            pass
+        try:
+            prepared_flats[bank] = parse_flats(glbs.by_name(f"FLATSG{bank + 1}_ITM").data)
+        except KeyError:
+            pass
+
+    replacements: dict[str, bytes] = {}
+    libs = mod.get("libs", {})
+    if not isinstance(libs, dict):
+        raise ValueError("rapmod libs must be an object")
+    for key, patch in libs.items():
+        if key not in {"1", "2", "3", "4"}:
+            raise ValueError(f"invalid library bank {key}")
+        bank, name = int(key) - 1, f"SPRITE{key}_ITM"
+        result = _apply_record_patch(parse_sprite_lib(require_base(name)), patch)
+        replacements[name] = build_sprite_lib(result)
+        prepared_libs[bank] = result
+
+    flats = mod.get("flats", {})
+    if not isinstance(flats, dict):
+        raise ValueError("rapmod flats must be an object")
+    for key, patch in flats.items():
+        if key not in {"1", "2", "3", "4"}:
+            raise ValueError(f"invalid flats bank {key}")
+        bank, name = int(key) - 1, f"FLATSG{key}_ITM"
+        result = _apply_record_patch(parse_flats(require_base(name)), patch)
+        replacements[name] = build_flats(result)
+        prepared_flats[bank] = result
+
+    maps = mod.get("maps", {})
+    if not isinstance(maps, dict):
+        raise ValueError("rapmod maps must be an object")
+    for name, patch in maps.items():
+        if not isinstance(name, str) or re.fullmatch(r"MAP\d+G\d_MAP", name) is None:
+            raise ValueError(f"invalid map item name {name}")
+        result = _apply_map_patch(parse_map(require_base(name)), patch)
+        for row, cells in enumerate(result["tiles"]):
+            for col, cell in enumerate(cells):
+                bank = prepared_flats.get(cell["fgame"])
+                if bank is None or not 0 <= cell["flats"] < len(bank):
+                    raise ValueError(f"tile {row},{col} references missing G{cell['fgame'] + 1}:{cell['flats']}")
+        for i, sprite in enumerate(result["sprites"]):
+            bank = prepared_libs.get(sprite["game"])
+            if bank is None or sprite["slib"] >= len(bank):
+                raise ValueError(f"sprite {i} references missing G{sprite['game'] + 1}:{sprite['slib']}")
+        replacements[name] = build_map(result)
+
+    music = mod.get("music", {})
+    if not isinstance(music, dict):
+        raise ValueError("rapmod music must be an object")
+    for name, patch in music.items():
+        if name not in {f"RAP{i}_MUS" for i in range(1, 9)}:
+            raise ValueError(f"invalid music slot {name}")
+        patch = _patch_object(patch, {"label", "mus"}, f"{name} music patch")
+        require_base(name)
+        if not isinstance(patch.get("mus"), str):
+            raise ValueError(f"{name} music must be base64 text")
+        try:
+            data = base64.b64decode(patch["mus"], validate=True)
+        except (ValueError, base64.binascii.Error) as exc:
+            raise ValueError(f"{name} music is not valid base64") from exc
+        validate_mus(data)
+        replacements[name] = data
+
+    if not replacements:
+        raise ValueError("rapmod contains no changes")
+
+    touched: set[int] = set()
+    for name, data in replacements.items():
+        item_id = glbs.item_id(name)
+        if item_id < 0:  # require_base should have produced the clearer error first
+            raise ValueError(f"{name} is not available in the loaded base archives")
+        glbs.by_id(item_id).data = data
+        touched.add(item_id >> 16)
+    return touched
 
 
 # --------------------------------------------------------------------------

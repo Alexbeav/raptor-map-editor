@@ -170,6 +170,12 @@ unsupported browsers still get downloads.
 
 ## Phase 3 — sharing
 
+**Status (2026-07-15): implemented.** Browser and command-line `.rapmod` v1
+apply paths share item-level SHA-256 requirements and materialize the same map,
+sprite-library, FLATS, and MUS changes. Synthetic unit and Playwright tests
+cover round trips, transactional rollback, mismatched bases, invalid asset
+references, malformed music, and future-version sections.
+
 ### 8. Mod file export/import, v1 (L)
 
 The point: share author-created changes **without copying the user's base game
@@ -187,8 +193,9 @@ design, not a claim about the legal status of any particular mod.
 { "format": "rapmod", "version": 1,
   "requires": { "MAP1G1_MAP": "sha256:...", "SPRITE1_ITM": "sha256:..." },
   "maps": { "MAP1G1_MAP": { "tiles": [{ "r": 4, "c": 2, "value": {...} }],
-                               "sprites": { "replaceGroups": [...] } } },
-  "libs": { "1": { "fields": [{ "index": 12, "hits": 80 }],
+                               "spriteGroups": [{ "at": 2, "delete": 1,
+                                                   "insert": [[...]] }] } },
+  "libs": { "1": { "fields": [{ "index": 12, "set": { "hits": 80 } }],
                      "append": [...] } },
   "flats": { "1": { "fields": [...] } },
   "music": { "RAP2_MUS": { "label": "...", "mus": "<base64 DMX MUS>" } } }

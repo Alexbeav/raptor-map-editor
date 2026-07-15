@@ -132,6 +132,9 @@
   <button id="redoBtn" disabled>Redo</button>
   <button id="jsonExportBtn" disabled>Export JSON</button>
   <label class="file">Import JSON<input type="file" id="jsonInput" accept=".json"></label>
+  <button id="modExportBtn" disabled>Export .rapmod</button>
+  <label class="file">Import .rapmod<input type="file" id="modInput" accept=".rapmod,application/json"></label>
+  <button id="modUndoBtn" disabled>Undo mod import</button>
   <button id="saveBtn" disabled>Download GLB</button>
   <button id="helpBtn" title="help / about">?</button>
   <span id="status">no files loaded</span>
@@ -307,6 +310,13 @@
   write. The editor also keeps a local recovery session in IndexedDB after
   edits; Restore/Start Fresh appears the next time it opens. JSON export/import
   matches the companion command-line tools.</p>
+  <h3>Sharing mods</h3>
+  <p><b>Export .rapmod</b> creates a compact JSON patch containing only your
+  changed map cells and spawn groups, changed/appended data records, and custom
+  music. It does not contain unchanged base-game records. <b>Import .rapmod</b>
+  checks SHA-256 hashes against the recipient's own loaded GLBs, previews every
+  affected map, bank, and music slot, then validates the complete result before
+  applying anything. <b>Undo mod import</b> restores the entire prior session.</p>
   <h3>Shortcuts</h3>
   <p><kbd>Ctrl+Z</kbd> undo &middot; <kbd>Ctrl+Y</kbd> / <kbd>Ctrl+Shift+Z</kbd> redo
   (per map / per library bank) &middot; <kbd>Del</kbd> delete selected sprite &middot;
@@ -568,6 +578,119 @@ function collectMapWarnings(map, assets = {}) {
   return findings;
 }
 
+const jsonClone = value => JSON.parse(JSON.stringify(value));
+const jsonEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+function assertObjectKeys(value, allowed, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(`${label} must be an object`);
+  const unknown = Object.keys(value).filter(key => !allowed.includes(key));
+  if (unknown.length) throw new Error(`${label} contains unknown field ${unknown[0]}`);
+}
+
+function diffSpawnGroups(baseSprites, editedSprites) {
+  const base = spawnGroups(baseSprites), edited = spawnGroups(editedSprites);
+  const a = base.map(JSON.stringify), b = edited.map(JSON.stringify);
+  const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const ops = [];
+  let i = 0, j = 0, pending = null;
+  const flush = () => { if (pending) { ops.push(pending); pending = null; } };
+  while (i < base.length || j < edited.length) {
+    if (i < base.length && j < edited.length && a[i] === b[j]) {
+      flush(); i++; j++; continue;
+    }
+    if (!pending) pending = { at: i, delete: 0, insert: [] };
+    if (i < base.length && (j >= edited.length || dp[i + 1][j] >= dp[i][j + 1])) {
+      pending.delete++; i++;
+    } else {
+      pending.insert.push(jsonClone(edited[j])); j++;
+    }
+  }
+  flush();
+  return ops;
+}
+
+function diffMapPatch(base, edited) {
+  validateMap(base); validateMap(edited);
+  const tiles = [];
+  for (let r = 0; r < MAP_ROWS; r++) for (let c = 0; c < MAP_COLS; c++)
+    if (!jsonEqual(base.tiles[r][c], edited.tiles[r][c]))
+      tiles.push({ r, c, value: jsonClone(edited.tiles[r][c]) });
+  const spriteOps = diffSpawnGroups(base.sprites, edited.sprites);
+  const patch = {};
+  if (tiles.length) patch.tiles = tiles;
+  if (spriteOps.length) patch.spriteGroups = spriteOps;
+  return patch;
+}
+
+function applyMapPatch(base, patch) {
+  assertObjectKeys(patch, ["tiles", "spriteGroups"], "map patch");
+  const result = jsonClone(base);
+  if (patch.tiles !== undefined) {
+    if (!Array.isArray(patch.tiles)) throw new Error("map patch tiles must be an array");
+    for (const [i, edit] of patch.tiles.entries()) {
+      assertObjectKeys(edit, ["r", "c", "value"], `tile edit ${i}`);
+      intField(edit.r, `tile edit ${i} row`, 0, MAP_ROWS - 1);
+      intField(edit.c, `tile edit ${i} column`, 0, MAP_COLS - 1);
+      result.tiles[edit.r][edit.c] = jsonClone(edit.value);
+    }
+  }
+  if (patch.spriteGroups !== undefined) {
+    if (!Array.isArray(patch.spriteGroups)) throw new Error("map patch spriteGroups must be an array");
+    const groups = spawnGroups(result.sprites);
+    const ops = patch.spriteGroups.map((op, i) => {
+      assertObjectKeys(op, ["at", "delete", "insert"], `sprite-group operation ${i}`);
+      intField(op.at, `sprite-group operation ${i} at`, 0, groups.length);
+      intField(op.delete, `sprite-group operation ${i} delete`, 0, groups.length - op.at);
+      if (!Array.isArray(op.insert)) throw new Error(`sprite-group operation ${i} insert must be an array`);
+      if (op.insert.some(group => !Array.isArray(group)))
+        throw new Error(`sprite-group operation ${i} insert must contain spawn groups`);
+      return op;
+    }).sort((x, y) => y.at - x.at);
+    for (const op of ops) groups.splice(op.at, op.delete, ...jsonClone(op.insert));
+    result.sprites = groups.flat();
+  }
+  return validateMap(result);
+}
+
+function diffRecordBank(base, edited) {
+  if (!Array.isArray(base) || !Array.isArray(edited)) throw new Error("record banks must be arrays");
+  if (edited.length < base.length) throw new Error("record-bank deletion is not supported by rapmod v1");
+  const fields = [];
+  for (let index = 0; index < base.length; index++) {
+    const set = {};
+    for (const key of new Set([...Object.keys(base[index]), ...Object.keys(edited[index])]))
+      if (!jsonEqual(base[index][key], edited[index][key])) set[key] = jsonClone(edited[index][key]);
+    if (Object.keys(set).length) fields.push({ index, set });
+  }
+  const patch = {};
+  if (fields.length) patch.fields = fields;
+  if (edited.length > base.length) patch.append = jsonClone(edited.slice(base.length));
+  return patch;
+}
+
+function applyRecordBankPatch(base, patch) {
+  assertObjectKeys(patch, ["fields", "append"], "record-bank patch");
+  const result = jsonClone(base);
+  if (patch.fields !== undefined) {
+    if (!Array.isArray(patch.fields)) throw new Error("record-bank fields must be an array");
+    for (const [i, edit] of patch.fields.entries()) {
+      assertObjectKeys(edit, ["index", "set"], `record edit ${i}`);
+      intField(edit.index, `record edit ${i} index`, 0, result.length - 1);
+      assertObjectKeys(edit.set, Object.keys(result[edit.index]), `record edit ${i} set`);
+      Object.assign(result[edit.index], jsonClone(edit.set));
+    }
+  }
+  if (patch.append !== undefined) {
+    if (!Array.isArray(patch.append)) throw new Error("record-bank append must be an array");
+    result.push(...jsonClone(patch.append));
+  }
+  return result;
+}
+
 const MAX_SPAWN_ROW = 139;                          // scroll starts at row 139
 
 /* Full 528-byte SPRITE records (MAP.H:95-132). Field names match the Python
@@ -731,6 +854,7 @@ if (typeof document !== "undefined") (function initUI() {
   const tilesetStart = new Map();   // bank -> first tile item id
   const spriteLibs = new Map();     // bank -> parsed lib
   const flatsLibs = new Map();      // bank -> parsed flats
+  const baselineItems = new Map();  // immutable item bytes from the loaded archives
   const dirtyFlats = new Set();     // bank numbers with edited FLATS records
   const MUSIC_SLOTS = [
     ["RAP8_MUS", "RAP2_MUS", "RAP4_MUS", "RAP7_MUS", "RAP6_MUS", "RAP2_MUS", "RAP3_MUS", "RAP4_MUS", "RAP6_MUS"],
@@ -746,6 +870,7 @@ if (typeof document !== "undefined") (function initUI() {
   const SESSION_VERSION = 1;
   let sessionSaveTimer = 0, restoringSession = false, sessionSaveErrorShown = false;
   let directoryHandle = null, directorySaveConfirmed = false;
+  let lastModRollback = null;
 
   const canvas = $("map"), ctx = canvas.getContext("2d");
 
@@ -785,6 +910,7 @@ if (typeof document !== "undefined") (function initUI() {
       levels: mapEntries(levels), dirty: [...dirty], dirtyLibs: [...dirtyLibs],
       dirtyFlats: [...dirtyFlats], dirtyMusicSlots: [...dirtyMusicSlots],
       spriteLibs: mapEntries(spriteLibs), flatsLibs: mapEntries(flatsLibs),
+      baselineItems: mapEntries(baselineItems),
       undoStacks: mapEntries(undoStacks), redoStacks: mapEntries(redoStacks),
       libUndo: mapEntries(libUndo), libRedo: mapEntries(libRedo),
       musicSources: mapEntries(musicSources), musicAssignments: mapEntries(musicAssignments),
@@ -838,6 +964,16 @@ if (typeof document !== "undefined") (function initUI() {
       const restoreSet = (target, values) => { target.clear(); for (const value of values || []) target.add(value); };
       restoreMap(levels, snapshot.levels); restoreMap(spriteLibs, snapshot.spriteLibs);
       restoreMap(flatsLibs, snapshot.flatsLibs); restoreMap(undoStacks, snapshot.undoStacks);
+      if (snapshot.baselineItems) restoreMap(baselineItems, snapshot.baselineItems);
+      else {
+        baselineItems.clear();
+        for (const saved of snapshot.files) {
+          const original = parseGlb((saved.originalBytes || saved.bytes).buffer.slice(
+            (saved.originalBytes || saved.bytes).byteOffset,
+            (saved.originalBytes || saved.bytes).byteOffset + (saved.originalBytes || saved.bytes).byteLength));
+          for (const item of original.items) if (!baselineItems.has(item.name)) baselineItems.set(item.name, item.data.slice());
+        }
+      }
       restoreMap(redoStacks, snapshot.redoStacks); restoreMap(libUndo, snapshot.libUndo);
       restoreMap(libRedo, snapshot.libRedo); restoreMap(musicSources, snapshot.musicSources);
       restoreMap(musicAssignments, snapshot.musicAssignments);
@@ -1000,7 +1136,11 @@ if (typeof document !== "undefined") (function initUI() {
     if (replacing && (dirty.size || dirtyLibs.size || dirtyFlats.size || dirtyMusicSlots.size) &&
         !confirm("Loading a replacement archive starts a new session and discards current edits. Continue?")) return;
     if (replacing) resetSession();
-    for (const [n, f] of incoming) files.set(n, f);
+    for (const [n, f] of incoming) {
+      files.set(n, f);
+      for (const item of f.glb.items) if (!baselineItems.has(item.name))
+        baselineItems.set(item.name, item.data.slice());
+    }
     const loaded = [...files.keys()].sort((a, b) => a - b)
       .map(n => files.get(n).filename).join(", ");
     const skipNote = skipped.length
@@ -1031,6 +1171,7 @@ if (typeof document !== "undefined") (function initUI() {
       });
     $("mapSelect").innerHTML = mapIndex.map(m => `<option>${m.name}</option>`).join("");
     $("mapSelect").disabled = $("saveBtn").disabled = $("jsonExportBtn").disabled = !mapIndex.length;
+    $("modExportBtn").disabled = !mapIndex.length;
     fillBankSelects();
     initializeMusic();
     $("drop").classList.add("hide");
@@ -1042,7 +1183,7 @@ if (typeof document !== "undefined") (function initUI() {
 
   function resetSession(clearRecovery = true) {
     if (clearRecovery) clearStoredSession();
-    files.clear(); levels.clear(); dirty.clear(); undoStacks.clear(); redoStacks.clear();
+    files.clear(); levels.clear(); dirty.clear(); undoStacks.clear(); redoStacks.clear(); baselineItems.clear();
     picCache.clear(); tilesetStart.clear(); spriteLibs.clear(); flatsLibs.clear();
     dirtyLibs.clear(); libUndo.clear(); libRedo.clear(); dirtyFlats.clear();
     musicSources.clear(); musicAssignments.clear(); dirtyMusicSlots.clear();
@@ -1050,6 +1191,7 @@ if (typeof document !== "undefined") (function initUI() {
     directoryHandle = null; directorySaveConfirmed = false;
     clearSpriteSelection(); libSel = -1; placing = dragging = painting = false;
     marquee = dragState = spriteClipboard = null; customMusicSerial = 0;
+    lastModRollback = null; $("modUndoBtn").disabled = true;
     $("flatsForm").style.display = "none";
   }
 
@@ -2111,6 +2253,254 @@ if (typeof document !== "undefined") (function initUI() {
   $("redoBtn").addEventListener("click", () => {
     if (mode === "library") redoLib();
     else if (mode !== "music") redo();
+  });
+
+  const bytesEqual = (a, b) => a.length === b.length && a.every((value, i) => value === b[i]);
+  const patchChanged = patch => patch && Object.keys(patch).length > 0;
+
+  async function sha256(bytes) {
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+  }
+
+  function bytesToBase64(bytes) {
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000)
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(binary);
+  }
+
+  function base64ToBytes(value, label) {
+    if (typeof value !== "string") throw new Error(`${label} must be base64 text`);
+    let binary;
+    try { binary = atob(value); } catch { throw new Error(`${label} is not valid base64`); }
+    return Uint8Array.from(binary, char => char.charCodeAt(0));
+  }
+
+  async function exportRapmod() {
+    const mod = { format: "rapmod", version: 1, requires: {} };
+    const requireItem = async name => {
+      if (!baselineItems.has(name)) throw new Error(`${name} has no loaded baseline`);
+      if (!mod.requires[name]) mod.requires[name] = `sha256:${await sha256(baselineItems.get(name))}`;
+    };
+    const maps = {};
+    for (const entry of mapIndex) {
+      const baseBytes = baselineItems.get(entry.name);
+      if (!baseBytes) continue;
+      const base = parseMap(baseBytes);
+      const live = levels.get(entry.name) || parseMap(files.get(entry.filenum).glb.items[entry.idx].data);
+      const edited = jsonClone(live);
+      edited.sprites = normalizeSpawnOrder(edited.sprites);
+      const patch = diffMapPatch(base, edited);
+      if (patchChanged(patch)) { maps[entry.name] = patch; await requireItem(entry.name); }
+    }
+    if (Object.keys(maps).length) mod.maps = maps;
+    const libs = {}, flats = {};
+    for (let bank = 0; bank < 4; bank++) {
+      const libName = `SPRITE${bank + 1}_ITM`, flatName = `FLATSG${bank + 1}_ITM`;
+      if (baselineItems.has(libName)) {
+        const patch = diffRecordBank(parseSpriteLib(baselineItems.get(libName)), bankData(spriteLibs, bank));
+        if (patchChanged(patch)) { libs[bank + 1] = patch; await requireItem(libName); }
+      }
+      if (baselineItems.has(flatName)) {
+        const patch = diffRecordBank(parseFlats(baselineItems.get(flatName)), bankData(flatsLibs, bank));
+        if (patchChanged(patch)) { flats[bank + 1] = patch; await requireItem(flatName); }
+      }
+    }
+    if (Object.keys(libs).length) mod.libs = libs;
+    if (Object.keys(flats).length) mod.flats = flats;
+    const music = {};
+    for (let n = 1; n <= 8; n++) {
+      const name = `RAP${n}_MUS`, base = baselineItems.get(name), id = itemId(name);
+      if (!base || id < 0 || bytesEqual(base, byId(id).data)) continue;
+      validateMus(byId(id).data); await requireItem(name);
+      music[name] = { label: musicSources.get(musicAssignments.get(name))?.label || name,
+        mus: bytesToBase64(byId(id).data) };
+    }
+    if (Object.keys(music).length) mod.music = music;
+    if (!mod.maps && !mod.libs && !mod.flats && !mod.music)
+      throw new Error("nothing differs from the loaded base archives");
+    const bytes = new TextEncoder().encode(JSON.stringify(mod, null, 2));
+    download(bytes, `raptor-${new Date().toISOString().slice(0, 10)}.rapmod`);
+    setStatus(`exported mod: ${Object.keys(mod.requires).length} patched item(s)`);
+  }
+
+  function validateMapAgainstAssets(map, libs, flats) {
+    validateMap(map);
+    map.tiles.forEach((row, r) => row.forEach((cell, c) => {
+      const bank = flats.get(cell.fgame);
+      if (!bank || cell.flats < 0 || cell.flats >= bank.length)
+        throw new Error(`tile ${r},${c} references missing G${cell.fgame + 1}:${cell.flats}`);
+    }));
+    map.sprites.forEach((sprite, i) => {
+      const bank = libs.get(sprite.game);
+      if (!bank || sprite.slib < 0 || sprite.slib >= bank.length)
+        throw new Error(`sprite ${i} references missing G${sprite.game + 1}:${sprite.slib}`);
+    });
+  }
+
+  async function prepareRapmod(mod) {
+    const supported = ["format", "version", "requires", "maps", "libs", "flats", "music"];
+    if (mod && typeof mod === "object" && !Array.isArray(mod)) {
+      const unknown = Object.keys(mod).find(key => !supported.includes(key));
+      if (unknown) throw new Error(`rapmod section ${unknown} is not supported; the mod may have been made with a newer editor`);
+    }
+    assertObjectKeys(mod, supported, "rapmod");
+    if (mod.format !== "rapmod") throw new Error("not a rapmod file");
+    if (mod.version !== 1) throw new Error(mod.version > 1
+      ? "this mod was made with a newer editor" : `unsupported rapmod version ${mod.version}`);
+    assertObjectKeys(mod.requires, Object.keys(mod.requires || {}), "rapmod requires");
+    const verified = new Map();
+    const requireBase = async name => {
+      if (!Object.hasOwn(mod.requires, name)) throw new Error(`${name} patch is missing its base hash`);
+      const bytes = baselineItems.get(name);
+      if (!bytes) throw new Error(`${name} is not available in the loaded base archives`);
+      if (!verified.has(name)) verified.set(name, `sha256:${await sha256(bytes)}`);
+      if (verified.get(name) !== mod.requires[name]) throw new Error(`${name} base hash does not match this game data`);
+      return bytes;
+    };
+    const prepared = { maps: new Map(), libs: new Map(), flats: new Map(), music: new Map(),
+      changedLibs: new Set(), changedFlats: new Set() };
+    for (let bank = 0; bank < 4; bank++) {
+      const lib = baselineItems.get(`SPRITE${bank + 1}_ITM`), flat = baselineItems.get(`FLATSG${bank + 1}_ITM`);
+      if (lib) prepared.libs.set(bank, parseSpriteLib(lib));
+      if (flat) prepared.flats.set(bank, parseFlats(flat));
+    }
+    if (mod.libs !== undefined) {
+      assertObjectKeys(mod.libs, Object.keys(mod.libs), "rapmod libs");
+      for (const [key, patch] of Object.entries(mod.libs)) {
+        const bank = +key - 1, name = `SPRITE${key}_ITM`;
+        intField(bank, `library bank ${key}`, 0, 3);
+        const result = applyRecordBankPatch(parseSpriteLib(await requireBase(name)), patch);
+        buildSpriteLib(result); prepared.libs.set(bank, result); prepared.changedLibs.add(bank);
+      }
+    }
+    if (mod.flats !== undefined) {
+      assertObjectKeys(mod.flats, Object.keys(mod.flats), "rapmod flats");
+      for (const [key, patch] of Object.entries(mod.flats)) {
+        const bank = +key - 1, name = `FLATSG${key}_ITM`;
+        intField(bank, `flats bank ${key}`, 0, 3);
+        const result = applyRecordBankPatch(parseFlats(await requireBase(name)), patch);
+        buildFlats(result); prepared.flats.set(bank, result); prepared.changedFlats.add(bank);
+      }
+    }
+    if (mod.maps !== undefined) {
+      assertObjectKeys(mod.maps, Object.keys(mod.maps), "rapmod maps");
+      for (const [name, patch] of Object.entries(mod.maps)) {
+        if (!/^MAP\d+G\d_MAP$/.test(name)) throw new Error(`invalid map item name ${name}`);
+        const result = applyMapPatch(parseMap(await requireBase(name)), patch);
+        validateMapAgainstAssets(result, prepared.libs, prepared.flats);
+        prepared.maps.set(name, result);
+      }
+    }
+    if (mod.music !== undefined) {
+      assertObjectKeys(mod.music, Object.keys(mod.music), "rapmod music");
+      for (const [name, patch] of Object.entries(mod.music)) {
+        if (!/^RAP[1-8]_MUS$/.test(name)) throw new Error(`invalid music slot ${name}`);
+        assertObjectKeys(patch, ["label", "mus"], `${name} music patch`);
+        await requireBase(name);
+        const data = base64ToBytes(patch.mus, `${name} music`);
+        validateMus(data); prepared.music.set(name, { label: String(patch.label || name), data });
+      }
+    }
+    if (!prepared.maps.size && !prepared.music.size && !prepared.changedLibs.size && !prepared.changedFlats.size)
+      throw new Error("rapmod contains no changes");
+    return prepared;
+  }
+
+  function captureModRollback() {
+    const cloneEntries = map => structuredClone([...map]);
+    return {
+      curMap, levels: cloneEntries(levels), spriteLibs: cloneEntries(spriteLibs), flatsLibs: cloneEntries(flatsLibs),
+      undoStacks: cloneEntries(undoStacks), redoStacks: cloneEntries(redoStacks),
+      libUndo: cloneEntries(libUndo), libRedo: cloneEntries(libRedo),
+      musicSources: cloneEntries(musicSources), musicAssignments: cloneEntries(musicAssignments),
+      dirty: [...dirty], dirtyLibs: [...dirtyLibs], dirtyFlats: [...dirtyFlats], dirtyMusicSlots: [...dirtyMusicSlots],
+      fileData: [...files].map(([num, file]) => [num, file.glb.items.map(item => item.data.slice())]),
+    };
+  }
+
+  function restoreModRollback(snapshot) {
+    const restoreMap = (target, entries) => { target.clear(); for (const [key, value] of entries) target.set(key, value); };
+    const restoreSet = (target, values) => { target.clear(); for (const value of values) target.add(value); };
+    restoreMap(levels, snapshot.levels); restoreMap(spriteLibs, snapshot.spriteLibs); restoreMap(flatsLibs, snapshot.flatsLibs);
+    restoreMap(undoStacks, snapshot.undoStacks); restoreMap(redoStacks, snapshot.redoStacks);
+    restoreMap(libUndo, snapshot.libUndo); restoreMap(libRedo, snapshot.libRedo);
+    restoreMap(musicSources, snapshot.musicSources); restoreMap(musicAssignments, snapshot.musicAssignments);
+    restoreSet(dirty, snapshot.dirty); restoreSet(dirtyLibs, snapshot.dirtyLibs);
+    restoreSet(dirtyFlats, snapshot.dirtyFlats); restoreSet(dirtyMusicSlots, snapshot.dirtyMusicSlots);
+    for (const [num, data] of snapshot.fileData)
+      files.get(num).glb.items.forEach((item, i) => { item.data = data[i]; });
+    lastModRollback = null; $("modUndoBtn").disabled = true;
+    openMap(snapshot.curMap); drawLibList(); updateMusicPanel(); updateSaveBtn(); scheduleSessionSave();
+  }
+
+  function applyPreparedRapmod(prepared) {
+    const rollback = captureModRollback();
+    try {
+      for (const [name, map] of prepared.maps) {
+        if (!levels.has(name)) {
+          const entry = mapIndex.find(item => item.name === name);
+          levels.set(name, parseMap(files.get(entry.filenum).glb.items[entry.idx].data));
+        }
+        pushUndo(name); levels.set(name, map); dirty.add(name);
+      }
+      for (const bank of prepared.changedLibs) {
+        const lib = prepared.libs.get(bank);
+        const current = bankData(spriteLibs, bank);
+        const stack = libUndo.get(bank) || []; stack.push(JSON.stringify(current));
+        if (stack.length > 100) stack.shift(); libUndo.set(bank, stack); libRedo.delete(bank);
+        spriteLibs.set(bank, lib); dirtyLibs.add(bank);
+      }
+      for (const bank of prepared.changedFlats) {
+        const flats = prepared.flats.get(bank);
+        flatsLibs.set(bank, flats); dirtyFlats.add(bank);
+      }
+      for (const [name, source] of prepared.music) {
+        const id = itemId(name); byId(id).data = source.data.slice();
+        const key = `mod:${name}:${Date.now()}`;
+        musicSources.set(key, { label: source.label, data: source.data.slice() });
+        musicAssignments.set(name, key); dirtyMusicSlots.add(name);
+      }
+      lastModRollback = rollback; $("modUndoBtn").disabled = false;
+      openMap(curMap); drawLibList(); updateMusicPanel(); updateSaveBtn(); scheduleSessionSave();
+    } catch (err) { restoreModRollback(rollback); throw err; }
+  }
+
+  $("modExportBtn").addEventListener("click", async () => {
+    $("modExportBtn").disabled = true;
+    try { await exportRapmod(); }
+    catch (err) { setStatus(`mod export failed: ${err.message}`); }
+    finally { $("modExportBtn").disabled = !mapIndex.length; }
+  });
+
+  $("modInput").addEventListener("change", async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      if (file.size > 20 * 1024 * 1024) throw new Error("rapmod is larger than the 20 MiB safety limit");
+      const mod = JSON.parse(await file.text());
+      const prepared = await prepareRapmod(mod);
+      const summary = [
+        prepared.maps.size ? `maps: ${[...prepared.maps.keys()].join(", ")}` : "",
+        prepared.changedLibs.size ? `sprite banks: ${[...prepared.changedLibs].map(n => `G${n + 1}`).join(", ")}` : "",
+        prepared.changedFlats.size ? `flats banks: ${[...prepared.changedFlats].map(n => `G${n + 1}`).join(", ")}` : "",
+        prepared.music.size ? `music: ${[...prepared.music.keys()].map(slot =>
+          `${slot} (${mapsForMusicSlot(slot).join(", ")})`).join("; ")}` : "",
+      ].filter(Boolean).join("\n");
+      if (!confirm(`Import ${file.name}?\n\n${summary}\n\nCurrent edits in these sections will be overwritten.`)) {
+        setStatus("mod import cancelled; no changes were applied"); return;
+      }
+      applyPreparedRapmod(prepared);
+      setStatus(`imported ${file.name}; Undo mod import can restore the previous session`);
+    } catch (err) { setStatus(`mod import failed: ${err.message}`); }
+    finally { e.target.value = ""; }
+  });
+
+  $("modUndoBtn").addEventListener("click", () => {
+    if (!lastModRollback) return;
+    restoreModRollback(lastModRollback);
+    setStatus("undid the last mod import");
   });
 
   function download(bytes, filename) {

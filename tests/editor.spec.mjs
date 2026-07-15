@@ -367,3 +367,93 @@ test("partial folder failure preserves all backups and reports written archives"
   expect(state["FILE0002.GLB"]).toEqual(Array.from(secondBytes));
   expect(state["FILE0001.GLB"]).not.toEqual(Array.from(bytes));
 });
+
+test("rapmod export imports transactionally into a clean session and rolls back", async ({ browser }) => {
+  const { core, bytes } = fixture();
+  const authorContext = await browser.newContext({ acceptDownloads: true });
+  const author = await authorContext.newPage();
+  await author.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(author, bytes);
+  await author.locator("#tileGridCanvas").click({ position: { x: 51, y: 17 } });
+  await author.locator("#flatBonus").fill("30");
+  await author.locator("#flatBonus").press("Tab");
+  await clickMapCell(author, 2, 138);
+  await author.locator("#tabSprites").click();
+  await author.locator("#spriteList div[data-i='0']").click();
+  await author.locator("#placeBtn").click();
+  await clickMapCell(author, 3, 130);
+  await author.keyboard.press("Escape");
+  await author.locator("#tabLib").click();
+  await author.locator("#libList div[data-i='0']").click();
+  const hits = author.locator("#libNums input[data-f='hits']");
+  await hits.fill("40"); await hits.press("Tab");
+  await author.locator("#tabMusic").click();
+  await author.locator("#musicSelect").selectOption("RAP2_MUS");
+  const modDownloadPromise = author.waitForEvent("download");
+  await author.locator("#modExportBtn").click();
+  const modDownload = await modDownloadPromise;
+  const modBytes = await readFile(await modDownload.path());
+  const mod = JSON.parse(modBytes.toString("utf8"));
+  expect(mod.format).toBe("rapmod"); expect(mod.version).toBe(1);
+  expect(mod.maps.MAP1G1_MAP.tiles).toHaveLength(1);
+  expect(mod.maps.MAP1G1_MAP.spriteGroups.length).toBeGreaterThan(0);
+  expect(Object.keys(mod.libs["1"].fields[0].set)).toEqual(["hits"]);
+  expect(mod.flats["1"].fields[0].set.bonus).toBe(30);
+  expect(mod.music.RAP8_MUS.mus).toBeTruthy();
+  expect(Object.keys(mod.requires)).toEqual(expect.arrayContaining([
+    "MAP1G1_MAP", "SPRITE1_ITM", "FLATSG1_ITM", "RAP8_MUS",
+  ]));
+  await authorContext.close();
+
+  const playerContext = await browser.newContext({ acceptDownloads: true });
+  const player = await playerContext.newPage();
+  await player.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(player, bytes);
+  player.once("dialog", dialog => dialog.accept());
+  await player.locator("#modInput").setInputFiles({
+    name: "test.rapmod", mimeType: "application/json", buffer: modBytes,
+  });
+  await expect(player.locator("#status")).toContainText("imported test.rapmod");
+  await expect(player.locator("#modUndoBtn")).toBeEnabled();
+  const appliedDownloadPromise = player.waitForEvent("download");
+  await player.locator("#saveBtn").click();
+  const appliedBytes = new Uint8Array(await readFile(await (await appliedDownloadPromise).path()));
+  const applied = core.parseGlb(appliedBytes.buffer.slice(appliedBytes.byteOffset,
+    appliedBytes.byteOffset + appliedBytes.byteLength));
+  const item = name => applied.items.find(entry => entry.name === name).data;
+  const map = core.parseMap(item("MAP1G1_MAP"));
+  expect(map.tiles[138][2].flats).toBe(1); expect(map.sprites).toHaveLength(2);
+  expect(core.parseFlats(item("FLATSG1_ITM"))[1].bonus).toBe(30);
+  expect(core.parseSpriteLib(item("SPRITE1_ITM"))[0].hits).toBe(40);
+  expect(new DataView(item("RAP8_MUS").buffer, item("RAP8_MUS").byteOffset).getUint16(8, true)).toBe(1);
+
+  await player.locator("#modUndoBtn").click();
+  await expect(player.locator("#status")).toContainText("undid the last mod import");
+  const rollbackDownloadPromise = player.waitForEvent("download");
+  await player.locator("#saveBtn").click();
+  const rollbackBytes = new Uint8Array(await readFile(await (await rollbackDownloadPromise).path()));
+  expect(rollbackBytes).toEqual(bytes);
+
+  const rejectMod = async (mutate, message) => {
+    const invalid = structuredClone(mod);
+    mutate(invalid);
+    await player.locator("#modInput").setInputFiles({
+      name: "invalid.rapmod", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(invalid)),
+    });
+    await expect(player.locator("#status")).toContainText(message);
+    await expect(player.locator("#modUndoBtn")).toBeDisabled();
+  };
+  await rejectMod(value => { value.requires.MAP1G1_MAP = `sha256:${"0".repeat(64)}`; },
+    "MAP1G1_MAP base hash does not match");
+  await rejectMod(value => { value.maps.MAP1G1_MAP.spriteGroups[0].insert[0][0].slib = 999; },
+    "references missing G1:999");
+  await rejectMod(value => { value.music.RAP8_MUS.mus = Buffer.from("bad").toString("base64"); },
+    "not a DMX MUS file");
+  await rejectMod(value => { value.future = {}; }, "made with a newer editor");
+
+  const rejectedDownloadPromise = player.waitForEvent("download");
+  await player.locator("#saveBtn").click();
+  const rejectedBytes = new Uint8Array(await readFile(await (await rejectedDownloadPromise).path()));
+  expect(rejectedBytes).toEqual(bytes);
+  await playerContext.close();
+});

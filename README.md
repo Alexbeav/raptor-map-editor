@@ -31,6 +31,11 @@ never modified (saving downloads patched copies).
   a secure origin can open and save the GLBs in place while preserving an
   immutable first-save `.bak`. The first direct write requires confirmation;
   downloads remain the default and universal fallback.
+- **Share compact mods without base-game records** — `.rapmod` export stores
+  only changed cells, spawn groups, record fields/appends, and replacement MUS
+  data. Import verifies item-level SHA-256 hashes, previews affected content,
+  validates the complete result, and applies it transactionally with one-click
+  rollback.
 - **Change soundtrack slots** — choose another built-in track or import a DMX
   `.MUS` file (convert MIDI files with
   [midi3mus](https://github.com/skynettx/midi3mus/releases) first).
@@ -81,6 +86,7 @@ python tools/glbtool.py map2json  <datadir> MAP1G1        # level  <-> editable 
 python tools/glbtool.py json2map  <datadir> map1g1.json
 python tools/glbtool.py lib2json  <datadir> 1             # enemies <-> editable JSON
 python tools/glbtool.py json2lib  <datadir> lib.json
+python tools/glbtool.py mod2glb   <datadir> mod.rapmod -o patched  # apply a mod safely
 python tools/glbtool.py pic2png   <datadir> SHIP01G1_PIC  # any graphic -> PNG
 python tools/glbtool.py png2pic   <datadir> art.png --name MYSHIP_PIC   # PNG -> game
 python tools/render_map.py <datadir> --all                # render all 27 levels to PNG
@@ -89,6 +95,27 @@ python tools/render_map.py <datadir> --all                # render all 27 levels
 `png2pic` quantizes to the game palette and encodes either graphic format;
 the encoder reproduces the original tool's output byte-for-byte on
 re-encoded sprites.
+
+## Sharing mods
+
+Use **Export .rapmod** after editing to create a versioned, human-readable
+patch. A `.rapmod` contains item hashes and author-created differences rather
+than complete unchanged maps or sprite/tile-property records. Recipients load
+their own GLBs, choose **Import .rapmod**, review the affected maps, banks, and
+music slots, and confirm. A hash mismatch or invalid reference rejects the
+whole import without applying a partial change; **Undo mod import** restores
+the complete pre-import session.
+
+The equivalent non-destructive command-line workflow writes patched GLBs into
+a separate directory:
+
+```
+python tools/glbtool.py mod2glb /path/to/raptor mod.rapmod -o patched
+```
+
+Keep `.rapmod` files to changes you have the right to distribute. The format
+design reduces accidental redistribution of unchanged game data; it is not a
+legal determination about a particular mod.
 
 ## Tests
 
@@ -119,11 +146,10 @@ own GLB files from a copy of the game you own
 The file formats were reverse-engineered from the released DOS source code
 and the GPL-2 [skynettx/raptor](https://github.com/skynettx/raptor) port,
 then validated against the shipped data. Don't redistribute game files or
-archives containing them. The current JSON export contains complete map data
-and is intended for personal backup and tooling, not as a copyright-safe mod
-distribution format. A future base-hashed `.rapmod` patch format is planned in
-[ROADMAP.md](ROADMAP.md) for sharing author-created changes without bundling
-unchanged base-game records.
+archives containing them. JSON export contains complete map data and is
+intended for personal backup and tooling. For sharing author-created changes,
+use the base-hashed `.rapmod` patch format described above, which omits
+unchanged base map cells and library records.
 
 ## Credits
 

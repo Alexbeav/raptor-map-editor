@@ -13,10 +13,11 @@ const core = html.match(/\/\* =+ CORE ==[\s\S]*?\*\/([\s\S]*?)\/\* =+ END CORE/)
 if (!core) throw new Error("CORE block not found in index.html");
 const exports_ = {};
 new Function("exports", core[1] +
-  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, validateMus});"
+  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus});"
 )(exports_);
 const { parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats,
-  decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, validateMus } = exports_;
+  decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings,
+  diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus } = exports_;
 
 let failures = 0;
 const check = (label, ok) => { console.log(`${ok ? "PASS" : "FAIL"}  ${label}`); if (!ok) failures++; };
@@ -74,6 +75,26 @@ check("map warnings identify spawn cursor stall", warnings.filter(w => w.code ==
 check("map warnings identify missing sprite entry", warnings.filter(w => w.code === "missing-sprite").length === 1);
 check("map warnings omit valid tile references", warnings.every(w => w.code !== "missing-tile"));
 check("empty map warning", collectMapWarnings({ tiles: emptyTiles, sprites: [] }).some(w => w.code === "empty-map"));
+
+const patchBase = { tiles: JSON.parse(JSON.stringify(emptyTiles)), sprites: [
+  { link: 1, slib: 0, x: 0, y: 100, game: 0, level: 4 },
+  { link: 1, slib: 1, x: 1, y: 90, game: 0, level: 4 },
+] };
+const patchEdited = JSON.parse(JSON.stringify(patchBase));
+patchEdited.tiles[4][2].flats = 1;
+patchEdited.sprites[0].x = 3;
+patchEdited.sprites.push({ link: 1, slib: 2, x: 2, y: 80, game: 0, level: 3 });
+const mapPatch = diffMapPatch(patchBase, patchEdited);
+check("rapmod map diff stores only changed tile", mapPatch.tiles.length === 1 && mapPatch.tiles[0].r === 4);
+check("rapmod map diff/apply round trip", JSON.stringify(applyMapPatch(patchBase, mapPatch)) === JSON.stringify(patchEdited));
+const bankBase = [{ hits: 10, name: "A", path: [1, 2] }, { hits: 20, name: "B", path: [] }];
+const bankEdited = [{ hits: 15, name: "A", path: [1, 2] }, bankBase[1], { hits: 30, name: "C", path: [] }];
+const bankPatch = diffRecordBank(bankBase, bankEdited);
+check("rapmod bank diff stores changed fields and append", bankPatch.fields[0].set.hits === 15 && !Object.hasOwn(bankPatch.fields[0].set, "name") && bankPatch.append.length === 1);
+check("rapmod bank diff/apply round trip", JSON.stringify(applyRecordBankPatch(bankBase, bankPatch)) === JSON.stringify(bankEdited));
+let unknownPatchRejected = false;
+try { applyMapPatch(patchBase, { newerField: [] }); } catch { unknownPatchRejected = true; }
+check("rapmod unknown map section rejected", unknownPatchRejected);
 
 const required = Array.from({ length: 5 }, (_, n) => join(dataDir, `FILE000${n}.GLB`));
 if (!required.every(existsSync)) {
