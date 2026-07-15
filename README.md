@@ -31,14 +31,19 @@ never modified (saving downloads patched copies).
   a secure origin can open and save the GLBs in place while preserving an
   immutable first-save `.bak`. The first direct write requires confirmation;
   downloads remain the default and universal fallback.
+- **Import and create artwork** — PNGs are quantized locally to Raptor's VGA
+  palette. Replace tiles or sprite graphics in place, or append consecutive
+  multi-frame sprites without shifting existing positional item IDs.
+- **Edit combat effects visually** — the Library canvas switches between
+  flight paths, gun mounts, and engine flares; drag/add/delete points and edit
+  shot types or flame widths over the actual sprite graphic.
 - **Share compact mods without base-game records** — `.rapmod` export stores
   only changed cells, spawn groups, record fields/appends, and replacement MUS
-  data. Import verifies item-level SHA-256 hashes, previews affected content,
-  validates the complete result, and applies it transactionally with one-click
-  rollback.
-- **Change soundtrack slots** — choose another built-in track or import a DMX
-  `.MUS` file (convert MIDI files with
-  [midi3mus](https://github.com/skynettx/midi3mus/releases) first).
+  or PIC data. Import verifies item-level SHA-256 hashes, previews affected
+  content, validates the complete result, and applies it transactionally with
+  one-click rollback. It emits compatible v1 unless embedded artwork requires v2.
+- **Change soundtrack slots** — choose another built-in track, import a DMX
+  `.MUS` file, or import Standard MIDI format 0/1 for local conversion to MUS.
   The original engine hard-codes eight shared slots, so the editor
   shows every other level affected before a slot is changed.
 - **Edit the enemies themselves** — every enemy definition in the game: hit
@@ -100,11 +105,14 @@ re-encoded sprites.
 
 Use **Export .rapmod** after editing to create a versioned, human-readable
 patch. A `.rapmod` contains item hashes and author-created differences rather
-than complete unchanged maps or sprite/tile-property records. Recipients load
-their own GLBs, choose **Import .rapmod**, review the affected maps, banks, and
-music slots, and confirm. A hash mismatch or invalid reference rejects the
-whole import without applying a partial change; **Undo mod import** restores
-the complete pre-import session.
+than complete unchanged maps or sprite/tile-property records. Version 2 can
+also carry replaced or appended PIC artwork addressed by archive and item index,
+which safely handles unnamed and duplicate-name graphics. Mods without artwork
+use version 1, and both versions remain importable.
+Recipients load their own GLBs, choose **Import .rapmod**, review the affected
+maps, banks, artwork, and music slots, and confirm. A hash mismatch or invalid
+reference rejects the whole import without applying a partial change;
+**Undo mod import** restores the complete pre-import session.
 
 The equivalent non-destructive command-line workflow writes patched GLBs into
 a separate directory:

@@ -1,5 +1,5 @@
 """
-glbtool.py - CLI for Raptor GLB archives (Phase 0 toolkit).
+glbtool.py - CLI companion for Raptor GLB archives and .rapmod patches.
 
 Commands:
   list <glb-file-or-dir>              List items (id, flags, size, name)

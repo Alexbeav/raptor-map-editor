@@ -75,6 +75,8 @@
   .grid2 input, .grid2 select { width: 100%; min-width: 0; }
   #pathCanvas { display: block; background: #0b0c0f; border: 1px solid var(--line);
     cursor: crosshair; width: 100%; }
+  #artPreview { display: block; margin: 6px auto; max-width: 100%; height: 120px;
+    background: #0b0c0f; border: 1px solid var(--line); image-rendering: pixelated; }
   #libInameOk { font-size: 14px; }
   #spritePrev { display: flex; gap: 8px; align-items: flex-start; min-height: 70px; }
   #spritePrevCanvas { max-width: 96px; image-rendering: pixelated;
@@ -216,9 +218,33 @@
         <div id="libNums" class="grid2"></div>
       </fieldset>
       <fieldset id="pathBox" style="display:none">
-        <legend>flight path &mdash; <span id="pathInfo"></span></legend>
+        <legend>visual editor &mdash; <span id="pathInfo"></span></legend>
+        <div class="row"><label>layer <select id="pathLayer">
+          <option value="path">flight path</option><option value="guns">gun mounts</option>
+          <option value="engines">engine flares</option>
+        </select></label>
+        <label id="mountValueBox" style="display:none" class="grow"><span id="mountValueLabel"></span>
+          <input type="number" id="mountValue" min="-32768" max="32767"></label></div>
         <canvas id="pathCanvas" width="256" height="200"></canvas>
-        <div class="hint">drag waypoint &middot; click = add &middot; right-click = delete &middot; &#9733; = spawn point</div>
+        <div class="hint" id="pathHint">drag waypoint &middot; click = add &middot; right-click = delete &middot; &#9733; = spawn point</div>
+      </fieldset>
+      <fieldset id="artImportBox">
+        <legend>import PNG artwork</legend>
+        <div class="row"><select id="artAction" class="grow">
+          <option value="replace-sprite">Replace selected sprite graphic</option>
+          <option value="replace-tile">Replace selected tile graphic</option>
+          <option value="append-sprite">Append new sprite frame(s)</option>
+        </select></div>
+        <div class="row" id="artAppendOptions" style="display:none">
+          <label class="grow">first item <input id="artName" maxlength="15" value="CUSTOM_PIC"></label>
+          <label>archive <select id="artFile"></select></label>
+        </div>
+        <label class="file" style="display:block;text-align:center">Choose PNG file(s)
+          <input type="file" id="artInput" accept="image/png,.png,.PNG">
+        </label>
+        <canvas id="artPreview" width="160" height="120"></canvas>
+        <div id="artInfo" class="hint">Choose artwork to preview it in the game palette.</div>
+        <button id="artApplyBtn" disabled style="width:100%">Apply artwork</button>
       </fieldset>
       <div class="hint">changes apply to <b>every</b> placement of the entry, on all maps using this bank</div>
     </div>
@@ -228,14 +254,14 @@
         <div class="row">Track <select id="musicSelect" class="grow"></select></div>
         <div id="musicInfo" class="hint"></div>
         <div class="row">
-          <label class="file grow" style="text-align:center">Import custom .MUS
-            <input type="file" id="musicInput" accept=".mus,.MUS">
+          <label class="file grow" style="text-align:center">Import MIDI or .MUS
+            <input type="file" id="musicInput" accept=".mid,.midi,.MID,.MIDI,.mus,.MUS">
           </label>
           <button id="musicResetBtn">Original</button>
         </div>
       </fieldset>
-      <div class="hint">The original engine hard-codes eight soundtrack slots. Levels sharing a slot always share its track. Custom files must use the DMX MUS format, not MIDI/MP3/WAV &mdash;
-        convert MIDI files first with <a href="https://github.com/skynettx/midi3mus/releases" target="_blank" rel="noopener">midi3mus</a>.</div>
+      <div class="hint">The original engine hard-codes eight soundtrack slots. Levels sharing a slot always share its track.
+        Standard MIDI format 0/1 files are converted locally to DMX MUS; native .MUS files are accepted directly.</div>
     </div>
   </aside>
   <div id="wrap"><canvas id="map" width="288" height="4800"></canvas></div>
@@ -288,18 +314,21 @@
   cursor row. <b>Clear all</b> removes every sprite without touching the tiles.</p>
   <h3>Library tab</h3>
   <p>Edits the enemy definitions themselves &mdash; hit points, bounty, speed, fire rate,
-  flight type &mdash; and the flight path on a canvas: drag waypoints, click to add,
-  right-click to delete. ★ is the spawn point; on <i>repeat</i> paths the orange waypoint
-  is the loop-back target. <b>Duplicate</b> appends a copy as a brand-new enemy &mdash;
+  flight type &mdash; and three visual canvas layers: flight paths, gun mounts, and engine
+  flares. Drag markers, click to add, and right-click to delete; gun shot types and flame
+  widths are editable after selecting a marker. ★ is the spawn point; on <i>repeat</i>
+  paths the orange waypoint is the loop-back target. <b>Duplicate</b> appends a copy as a brand-new enemy &mdash;
   the engine reads the entry count from the data size, so new enemies work even in the
-  unmodified original game. Library changes affect every placement of that entry.</p>
+  unmodified original game. The PNG importer previews palette quantization, replaces
+  existing sprite/tile graphics safely, or appends consecutive sprite frames. New tiles
+  are not inserted because tile item IDs are positional. Library changes affect every
+  placement of that entry.</p>
   <h3>Music tab</h3>
-  <p>Choose another built-in track or import a DMX <b>.MUS</b> file for the current
+  <p>Choose another built-in track, import a DMX <b>.MUS</b> file, or import a Standard
+  MIDI format 0/1 file for local conversion for the current
   level's soundtrack slot. The original engine hard-codes eight shared slots, so
-  every other affected level is shown in yellow. MIDI, MP3, WAV, and Ogg files must
-  be converted to DMX MUS externally before importing &mdash; for MIDI, skynettx's
-  <a href="https://github.com/skynettx/midi3mus/releases" target="_blank" rel="noopener">midi3mus</a>
-  does exactly this.</p>
+  every other affected level is shown in yellow. MIDI format 2, SMPTE-timed MIDI,
+  MP3, WAV, and Ogg are not supported.</p>
   <h3>Saving &amp; testing</h3>
   <p><b>Download GLB</b> saves patched copies of every archive you touched.
   Back up your originals, drop the patched files next to any Raptor that reads
@@ -313,7 +342,8 @@
   <h3>Sharing mods</h3>
   <p><b>Export .rapmod</b> creates a compact JSON patch containing only your
   changed map cells and spawn groups, changed/appended data records, and custom
-  music. It does not contain unchanged base-game records. <b>Import .rapmod</b>
+  music or artwork. Exports use v1 unless embedded artwork requires v2, and both
+  versions remain importable. <b>Import .rapmod</b>
   checks SHA-256 hashes against the recipient's own loaded GLBs, previews every
   affected map, bank, and music slot, then validates the complete result before
   applying anything. <b>Undo mod import</b> restores the entire prior session.</p>
@@ -339,6 +369,7 @@
 const KEY = "32768GLB", SEED = 0x19;
 const MAP_COLS = 9, MAP_ROWS = 150, MAP_SIZE = MAP_COLS * MAP_ROWS;
 const MAZELEVEL_SIZE = 12 + MAP_SIZE * 4, CSPRITE_SIZE = 24, SPRITE_SIZE = 528;
+const GTYPE_SPRITE = 0, GTYPE_PIC = 1;
 const LEVEL_NAMES = { 1: "secret1", 2: "secret2", 3: "easy", 4: "medium", 5: "hard", 6: "secret3" };
 const LEVEL_COLORS = { 3: "#3cdc3c", 4: "#ffd228", 5: "#ff3c3c", 1: "#3cdcdc", 2: "#3cdcdc", 6: "#3cdcdc" };
 
@@ -747,30 +778,180 @@ function buildSpriteLib(lib) {
   return out;
 }
 
-function validateMus(u8) {
-  if (!(u8 instanceof Uint8Array) || u8.length < 16 || u8[0] !== 0x4D || u8[1] !== 0x55 ||
-      u8[2] !== 0x53 || u8[3] !== 0x1A) throw new Error("not a DMX MUS file (expected MUS\\x1A header)");
+function validateMus(u8, strict = false) {
+  if (!(u8 instanceof Uint8Array) || u8.length < 16 || u8.length > 4 * 1024 * 1024 ||
+      u8[0] !== 0x4D || u8[1] !== 0x55 || u8[2] !== 0x53 || u8[3] !== 0x1A)
+    throw new Error("not a DMX MUS file (bad header)");
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
-  const scoreLen = dv.getUint16(4, true), scoreStart = dv.getUint16(6, true);
-  if (scoreStart < 16 || scoreStart + scoreLen > u8.length) throw new Error("MUS score points outside the file");
+  const scoreLen = dv.getUint16(4, true), scoreStart = dv.getUint16(6, true),
+    channels = dv.getUint16(8, true), secondary = dv.getUint16(10, true), instruments = dv.getUint16(12, true);
+  if (strict && (channels > 15 || secondary > 15)) throw new Error("MUS header has too many channels");
+  if (scoreStart < 16 || scoreStart + scoreLen > u8.length ||
+      strict && scoreStart < 16 + instruments * 2)
+    throw new Error("MUS score or instrument table points outside the file");
+  const patches = 16 + instruments * 2 <= scoreStart
+    ? Array.from({ length: instruments }, (_, i) => dv.getUint16(16 + i * 2, true)) : [];
   const end = scoreStart + scoreLen;
   let pos = scoreStart, ended = false;
-  const take = n => { if (pos + n > end) throw new Error("MUS event is truncated"); pos += n; };
+  const take = () => { if (pos >= end) throw new Error("MUS event is truncated"); return u8[pos++]; };
   while (pos < end && !ended) {
-    const event = u8[pos++], type = (event >> 4) & 7;
-    if (type === 0 || type === 2 || type === 3) take(1);
-    else if (type === 1) { take(1); if (u8[pos - 1] & 0x80) take(1); }
-    else if (type === 4) take(2);
+    const event = take(), type = (event >> 4) & 7;
+    if (type === 0) { if (take() > 127 && strict) throw new Error("MUS release-note value is invalid"); }
+    else if (type === 1) { const note = take(); if (note & 0x80 && take() > 127 && strict) throw new Error("MUS note volume is invalid"); }
+    else if (type === 2) take();
+    else if (type === 3) { const controller = take(); if (strict && (controller < 10 || controller > 14)) throw new Error("MUS system controller is invalid"); }
+    else if (type === 4) { const controller = take(), value = take(); if (strict && (controller > 9 || value > 127)) throw new Error("MUS controller event is invalid"); }
     else if (type === 6) ended = true;
     else throw new Error(`unsupported MUS event type ${type}`);
     if (!ended && event & 0x80) {
-      let bytes = 0, value;
-      do { take(1); value = u8[pos - 1]; } while ((value & 0x80) && ++bytes < 5);
+      let value, bytes = 0;
+      do { value = take(); bytes++; } while (value & 0x80 && bytes < (strict ? 5 : 6));
       if (value & 0x80) throw new Error("MUS delay value is too long");
     }
   }
   if (!ended) throw new Error("MUS score has no end event");
-  return { scoreLen, scoreStart, channels: dv.getUint16(8, true) };
+  if (strict && pos !== end) throw new Error("MUS score has trailing events after its end marker");
+  return { scoreLen, scoreStart, channels, secondary, patches };
+}
+
+const MIDI_CONTROLLER_TO_MUS = new Map([
+  [0, 1], [1, 2], [7, 3], [10, 4], [11, 5], [91, 6], [93, 7], [64, 8], [67, 9],
+  [120, 10], [123, 11], [126, 12], [127, 13], [121, 14],
+]);
+const RAPTOR_MUS_RATE = 70;
+
+function midiToMus(u8) {
+  if (!(u8 instanceof Uint8Array) || u8.length < 14 || u8.length > 4 * 1024 * 1024)
+    throw new Error("MIDI file is missing, truncated, or larger than 4 MiB");
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), ascii = (offset, value) =>
+    [...value].every((char, i) => u8[offset + i] === char.charCodeAt(0));
+  const read16 = offset => { if (offset + 2 > u8.length) throw new Error("MIDI header is truncated"); return dv.getUint16(offset); };
+  const read32 = offset => { if (offset + 4 > u8.length) throw new Error("MIDI chunk is truncated"); return dv.getUint32(offset); };
+  if (!ascii(0, "MThd")) throw new Error("not a Standard MIDI file (expected MThd)");
+  const headerLength = read32(4);
+  if (headerLength < 6 || 8 + headerLength > u8.length) throw new Error("MIDI header length is invalid");
+  const format = read16(8), trackCount = read16(10), division = read16(12);
+  if (format > 1) throw new Error(`MIDI format ${format} is not supported`);
+  if (!trackCount || format === 0 && trackCount !== 1) throw new Error("MIDI track count does not match its format");
+  if (division & 0x8000) throw new Error("SMPTE MIDI timing is not supported; use PPQN timing");
+  if (!division) throw new Error("MIDI PPQN division must be non-zero");
+
+  const events = [];
+  let chunkPos = 8 + headerLength;
+  for (let track = 0; track < trackCount; track++) {
+    if (chunkPos + 8 > u8.length || !ascii(chunkPos, "MTrk")) throw new Error(`MIDI track ${track} is missing its MTrk header`);
+    const length = read32(chunkPos + 4), end = chunkPos + 8 + length;
+    if (end > u8.length) throw new Error(`MIDI track ${track} points outside the file`);
+    let pos = chunkPos + 8, tick = 0, running = 0, order = 0;
+    const vlq = () => {
+      let value = 0;
+      for (let count = 0; count < 4; count++) {
+        if (pos >= end) throw new Error(`MIDI track ${track} has a truncated variable-length value`);
+        const byte = u8[pos++]; value = (value << 7) | (byte & 0x7F);
+        if (!(byte & 0x80)) return value;
+      }
+      throw new Error(`MIDI track ${track} has an overlong variable-length value`);
+    };
+    const dataByte = () => {
+      if (pos >= end || u8[pos] & 0x80) throw new Error(`MIDI track ${track} has a missing data byte`);
+      return u8[pos++];
+    };
+    while (pos < end) {
+      tick += vlq();
+      let status = u8[pos];
+      if (status & 0x80) { pos++; if (status < 0xF0) running = status; else running = 0; }
+      else { if (!running) throw new Error(`MIDI track ${track} uses running status without a channel status`); status = running; }
+      if (status === 0xFF) {
+        if (pos >= end) throw new Error(`MIDI track ${track} has a truncated meta event`);
+        const meta = u8[pos++], size = vlq(), start = pos; pos += size;
+        if (pos > end) throw new Error(`MIDI track ${track} has a truncated meta payload`);
+        if (meta === 0x51) {
+          if (size !== 3) throw new Error("MIDI tempo meta event must contain three bytes");
+          events.push({ tick, track, order: order++, kind: "tempo", tempo: (u8[start] << 16) | (u8[start + 1] << 8) | u8[start + 2] });
+        }
+        if (meta === 0x2F) break;
+        continue;
+      }
+      if (status === 0xF0 || status === 0xF7) {
+        const size = vlq(); pos += size;
+        if (pos > end) throw new Error(`MIDI track ${track} has a truncated SysEx event`);
+        continue;
+      }
+      if (status >= 0xF0) throw new Error(`unsupported MIDI system status 0x${status.toString(16)}`);
+      const command = status >> 4, channel = status & 15, a = dataByte();
+      const b = command === 0xC || command === 0xD ? 0 : dataByte();
+      events.push({ tick, track, order: order++, kind: "channel", command, channel, a, b });
+    }
+    chunkPos = end;
+  }
+
+  events.sort((a, b) => a.tick - b.tick || a.track - b.track || a.order - b.order);
+  const programs = Array(16).fill(0), volumes = Array(16).fill(-1), patches = new Set(),
+    channelMap = Array(16).fill(-1), musEvents = [];
+  let nextChannel = 0;
+  const mapChannel = channel => {
+    if (channel === 9) return 15;
+    if (channelMap[channel] < 0) {
+      if (nextChannel >= 15) throw new Error("MIDI uses more than 15 melodic channels");
+      channelMap[channel] = nextChannel++;
+    }
+    return channelMap[channel];
+  };
+  let tempo = 500000, lastTick = 0, micros = 0;
+  for (let index = 0; index < events.length;) {
+    const tick = events[index].tick;
+    micros += (tick - lastTick) * tempo / division; lastTick = tick;
+    const time = Math.max(0, Math.floor(micros * RAPTOR_MUS_RATE / 1000000 + 1e-9));
+    let groupEnd = index;
+    while (groupEnd < events.length && events[groupEnd].tick === tick) groupEnd++;
+    for (let i = index; i < groupEnd; i++) {
+      const event = events[i];
+      if (event.kind === "tempo") { if (event.tempo > 0) tempo = event.tempo; continue; }
+      let channel;
+      const add = (type, data) => { if (channel === undefined) channel = mapChannel(event.channel); musEvents.push({ time, type, channel, data }); };
+      if (event.command === 0x8 || event.command === 0x9 && event.b === 0) add(0, [event.a]);
+      else if (event.command === 0x9) {
+        channel = mapChannel(event.channel);
+        patches.add(event.channel === 9 ? 100 + event.a : programs[event.channel]);
+        const data = [event.a];
+        if (volumes[channel] !== event.b) { data[0] |= 0x80; data.push(event.b); volumes[channel] = event.b; }
+        add(1, data);
+      } else if (event.command === 0xB) {
+        const controller = MIDI_CONTROLLER_TO_MUS.get(event.a);
+        if (controller !== undefined) add(controller >= 10 ? 3 : 4, controller >= 10 ? [controller] : [controller, event.b]);
+      } else if (event.command === 0xC) {
+        programs[event.channel] = event.a;
+        if (event.channel !== 9) add(4, [0, event.a]);
+      } else if (event.command === 0xE) add(2, [((event.b << 7) | event.a) >> 6]);
+    }
+    index = groupEnd;
+  }
+
+  const finalTime = musEvents.length ? musEvents[musEvents.length - 1].time : 0;
+  musEvents.push({ time: finalTime, type: 6, channel: 0, data: [] });
+  const score = [], writeDelay = value => {
+    const encoded = [value & 0x7F];
+    while ((value = Math.floor(value / 128)) > 0) encoded.unshift((value & 0x7F) | 0x80);
+    score.push(...encoded);
+  };
+  for (let index = 0; index < musEvents.length;) {
+    let groupEnd = index + 1;
+    while (groupEnd < musEvents.length && musEvents[groupEnd].time === musEvents[index].time) groupEnd++;
+    const hasDelay = groupEnd < musEvents.length;
+    for (let i = index; i < groupEnd; i++) {
+      const event = musEvents[i], last = i === groupEnd - 1;
+      score.push((last && hasDelay ? 0x80 : 0) | (event.type << 4) | event.channel, ...event.data);
+    }
+    if (hasDelay) writeDelay(musEvents[groupEnd].time - musEvents[index].time);
+    index = groupEnd;
+  }
+  if (score.length > 0xFFFF) throw new Error("converted MUS score exceeds the 65535-byte format limit");
+  const instrumentList = [...patches].sort((a, b) => a - b), scoreStart = 16 + instrumentList.length * 2;
+  const out = new Uint8Array(scoreStart + score.length), odv = new DataView(out.buffer);
+  out.set([0x4D, 0x55, 0x53, 0x1A]); odv.setUint16(4, score.length, true); odv.setUint16(6, scoreStart, true);
+  odv.setUint16(8, nextChannel, true); odv.setUint16(12, instrumentList.length, true);
+  instrumentList.forEach((instrument, i) => odv.setUint16(16 + i * 2, instrument, true));
+  out.set(score, scoreStart); validateMus(out, true); return out;
 }
 
 function parseFlats(u8) {
@@ -798,11 +979,38 @@ function buildFlats(flats) {
   return out;
 }
 
-/* GFX_PIC -> {w, h, rgba} (Uint8ClampedArray, transparent where unmasked) */
-function decodePic(u8, palette) {
+function validatePic(u8) {
+  if (!(u8 instanceof Uint8Array) || u8.length < 20) throw new Error("PIC item is shorter than its header");
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   const type = dv.getInt32(0, true), w = dv.getInt32(12, true), h = dv.getInt32(16, true);
-  if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return null;
+  if (type !== GTYPE_SPRITE && type !== GTYPE_PIC) throw new Error(`unknown GFX_TYPE ${type}`);
+  if (w < 1 || h < 1 || w > 320 || h > 200) throw new Error(`PIC dimensions ${w}×${h} are outside 1×1–320×200`);
+  if (type === GTYPE_PIC) {
+    if (u8.length !== 20 + w * h) throw new Error("GPIC pixel data size does not match its dimensions");
+    return { type, w, h };
+  }
+  let pos = 20, ended = false;
+  while (pos + 16 <= u8.length) {
+    const x = dv.getInt32(pos, true), y = dv.getInt32(pos + 4, true),
+      offset = dv.getInt32(pos + 8, true), length = dv.getInt32(pos + 12, true);
+    pos += 16;
+    if (offset === -1 && length === -1) { ended = true; break; }
+    if (length < 1 || x < 0 || y < 0 || y >= h || x + length > w ||
+        offset !== y * 320 + x || pos + length > u8.length)
+      throw new Error("GSPRITE segment points outside the image or item");
+    pos += length;
+  }
+  if (!ended) throw new Error("GSPRITE has no terminator");
+  if (pos !== u8.length) throw new Error("GSPRITE has trailing data after its terminator");
+  return { type, w, h };
+}
+
+/* GFX_PIC -> {w, h, rgba} (Uint8ClampedArray, transparent where unmasked) */
+function decodePic(u8, palette) {
+  if (!(u8 instanceof Uint8Array) || u8.length < 20) return null;
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const type = dv.getInt32(0, true), w = dv.getInt32(12, true), h = dv.getInt32(16, true);
+  if ((type !== GTYPE_SPRITE && type !== GTYPE_PIC) || w <= 0 || h <= 0 || w > 1024 || h > 1024) return null;
   const rgba = new Uint8ClampedArray(w * h * 4);
   const put = (idx, p) => {
     const c = palette[p];
@@ -824,6 +1032,70 @@ function decodePic(u8, palette) {
     }
   } else return null;
   return { w, h, rgba };
+}
+
+const RESERVED_PALETTE_INDICES = new Set([0, 254, 255]);
+
+function quantizeRgba(w, h, rgba, palette) {
+  intField(w, "image width", 1, 320); intField(h, "image height", 1, 200);
+  if (!(rgba instanceof Uint8Array || rgba instanceof Uint8ClampedArray) || rgba.length !== w * h * 4)
+    throw new Error(`RGBA data must contain exactly ${w * h * 4} bytes`);
+  if (!Array.isArray(palette) || palette.length !== 256 ||
+      palette.some(color => !Array.isArray(color) || color.length < 3))
+    throw new Error("palette must contain 256 RGB entries");
+  const pixels = new Uint8Array(w * h), mask = new Uint8Array(w * h), cache = new Map();
+  for (let i = 0; i < w * h; i++) {
+    const o = i * 4, alpha = rgba[o + 3];
+    if (alpha < 128) continue;
+    const key = (rgba[o] << 16) | (rgba[o + 1] << 8) | rgba[o + 2];
+    let best = cache.get(key);
+    if (best === undefined) {
+      let bestDistance = Infinity;
+      for (let p = 0; p < 256; p++) {
+        if (RESERVED_PALETTE_INDICES.has(p)) continue;
+        const color = palette[p], dr = rgba[o] - color[0], dg = rgba[o + 1] - color[1], db = rgba[o + 2] - color[2];
+        const distance = dr * dr + dg * dg + db * db;
+        if (distance < bestDistance) { best = p; bestDistance = distance; if (!distance) break; }
+      }
+      cache.set(key, best);
+    }
+    pixels[i] = best; mask[i] = 1;
+  }
+  return { pixels, mask };
+}
+
+function encodePic(w, h, pixels, mask, gtype) {
+  intField(w, "image width", 1, 320); intField(h, "image height", 1, 200);
+  if (!(pixels instanceof Uint8Array) || pixels.length !== w * h ||
+      !(mask instanceof Uint8Array) || mask.length !== w * h)
+    throw new Error(`indexed image and mask must each contain exactly ${w * h} bytes`);
+  if (gtype === GTYPE_PIC) {
+    const out = new Uint8Array(20 + w * h), dv = new DataView(out.buffer);
+    dv.setInt32(0, GTYPE_PIC, true); dv.setInt32(4, 1, true);
+    dv.setInt32(12, w, true); dv.setInt32(16, h, true);
+    for (let i = 0; i < pixels.length; i++) out[20 + i] = mask[i] ? pixels[i] : 0;
+    return out;
+  }
+  if (gtype !== GTYPE_SPRITE) throw new Error(`unknown GFX_TYPE ${gtype}`);
+  const parts = [], header = new Uint8Array(20), hdv = new DataView(header.buffer);
+  hdv.setInt32(0, GTYPE_SPRITE, true); hdv.setInt32(8, h, true);
+  hdv.setInt32(12, w, true); hdv.setInt32(16, h, true); parts.push(header);
+  let total = header.length;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w;) {
+    if (!mask[y * w + x]) { x++; continue; }
+    let end = x + 1;
+    while (end < w && mask[y * w + end]) end++;
+    const segment = new Uint8Array(16 + end - x), dv = new DataView(segment.buffer);
+    dv.setInt32(0, x, true); dv.setInt32(4, y, true);
+    dv.setInt32(8, y * 320 + x, true); dv.setInt32(12, end - x, true);
+    segment.set(pixels.subarray(y * w + x, y * w + end), 16);
+    parts.push(segment); total += segment.length; x = end;
+  }
+  const terminator = new Uint8Array(16), tdv = new DataView(terminator.buffer);
+  tdv.setInt32(8, -1, true); tdv.setInt32(12, -1, true); parts.push(terminator); total += 16;
+  const out = new Uint8Array(total); let offset = 0;
+  for (const part of parts) { out.set(part, offset); offset += part.length; }
+  return out;
 }
 /* ================================================================ END CORE */
 
@@ -855,7 +1127,9 @@ if (typeof document !== "undefined") (function initUI() {
   const spriteLibs = new Map();     // bank -> parsed lib
   const flatsLibs = new Map();      // bank -> parsed flats
   const baselineItems = new Map();  // immutable item bytes from the loaded archives
+  const baselineById = new Map();   // immutable item bytes keyed by archive number + item index
   const dirtyFlats = new Set();     // bank numbers with edited FLATS records
+  const dirtyPics = new Set();      // replaced/appended graphic item ids
   const MUSIC_SLOTS = [
     ["RAP8_MUS", "RAP2_MUS", "RAP4_MUS", "RAP7_MUS", "RAP6_MUS", "RAP2_MUS", "RAP3_MUS", "RAP4_MUS", "RAP6_MUS"],
     ["RAP3_MUS", "RAP2_MUS", "RAP4_MUS", "RAP8_MUS", "RAP6_MUS", "RAP2_MUS", "RAP8_MUS", "RAP1_MUS", "RAP6_MUS"],
@@ -867,7 +1141,7 @@ if (typeof document !== "undefined") (function initUI() {
   let customMusicSerial = 0;
   const SESSION_DB = "raptor-map-editor", SESSION_STORE = "sessions", SESSION_KEY = "latest";
   const DIRECTORY_KEY = "game-directory";
-  const SESSION_VERSION = 1;
+  const SESSION_VERSION = 2;
   let sessionSaveTimer = 0, restoringSession = false, sessionSaveErrorShown = false;
   let directoryHandle = null, directorySaveConfirmed = false;
   let lastModRollback = null;
@@ -908,9 +1182,9 @@ if (typeof document !== "undefined") (function initUI() {
         originalBytes: file.originalBytes, bytes: buildGlb(file.glb),
       })),
       levels: mapEntries(levels), dirty: [...dirty], dirtyLibs: [...dirtyLibs],
-      dirtyFlats: [...dirtyFlats], dirtyMusicSlots: [...dirtyMusicSlots],
+      dirtyFlats: [...dirtyFlats], dirtyPics: [...dirtyPics], dirtyMusicSlots: [...dirtyMusicSlots],
       spriteLibs: mapEntries(spriteLibs), flatsLibs: mapEntries(flatsLibs),
-      baselineItems: mapEntries(baselineItems),
+      baselineItems: mapEntries(baselineItems), baselineById: mapEntries(baselineById),
       undoStacks: mapEntries(undoStacks), redoStacks: mapEntries(redoStacks),
       libUndo: mapEntries(libUndo), libRedo: mapEntries(libRedo),
       musicSources: mapEntries(musicSources), musicAssignments: mapEntries(musicAssignments),
@@ -964,21 +1238,14 @@ if (typeof document !== "undefined") (function initUI() {
       const restoreSet = (target, values) => { target.clear(); for (const value of values || []) target.add(value); };
       restoreMap(levels, snapshot.levels); restoreMap(spriteLibs, snapshot.spriteLibs);
       restoreMap(flatsLibs, snapshot.flatsLibs); restoreMap(undoStacks, snapshot.undoStacks);
-      if (snapshot.baselineItems) restoreMap(baselineItems, snapshot.baselineItems);
-      else {
-        baselineItems.clear();
-        for (const saved of snapshot.files) {
-          const original = parseGlb((saved.originalBytes || saved.bytes).buffer.slice(
-            (saved.originalBytes || saved.bytes).byteOffset,
-            (saved.originalBytes || saved.bytes).byteOffset + (saved.originalBytes || saved.bytes).byteLength));
-          for (const item of original.items) if (!baselineItems.has(item.name)) baselineItems.set(item.name, item.data.slice());
-        }
-      }
+      restoreMap(baselineItems, snapshot.baselineItems);
+      restoreMap(baselineById, snapshot.baselineById);
       restoreMap(redoStacks, snapshot.redoStacks); restoreMap(libUndo, snapshot.libUndo);
       restoreMap(libRedo, snapshot.libRedo); restoreMap(musicSources, snapshot.musicSources);
       restoreMap(musicAssignments, snapshot.musicAssignments);
       restoreSet(dirty, snapshot.dirty); restoreSet(dirtyLibs, snapshot.dirtyLibs);
-      restoreSet(dirtyFlats, snapshot.dirtyFlats); restoreSet(dirtyMusicSlots, snapshot.dirtyMusicSlots);
+      restoreSet(dirtyFlats, snapshot.dirtyFlats); restoreSet(dirtyPics, snapshot.dirtyPics);
+      restoreSet(dirtyMusicSlots, snapshot.dirtyMusicSlots);
       customMusicSerial = snapshot.customMusicSerial || 0;
       spriteClipboard = snapshot.spriteClipboard || null;
       lastCursorCell = snapshot.lastCursorCell || { c: 4, r: MAX_SPAWN_ROW };
@@ -1133,13 +1400,15 @@ if (typeof document !== "undefined") (function initUI() {
       } catch (e) { dropMsg(`Failed to parse ${esc(f.name)}: ${esc(e.message)}`); return; }
     }
     const replacing = [...incoming.keys()].some(n => files.has(n));
-    if (replacing && (dirty.size || dirtyLibs.size || dirtyFlats.size || dirtyMusicSlots.size) &&
+    if (replacing && (dirty.size || dirtyLibs.size || dirtyFlats.size || dirtyPics.size || dirtyMusicSlots.size) &&
         !confirm("Loading a replacement archive starts a new session and discards current edits. Continue?")) return;
     if (replacing) resetSession();
     for (const [n, f] of incoming) {
       files.set(n, f);
-      for (const item of f.glb.items) if (!baselineItems.has(item.name))
-        baselineItems.set(item.name, item.data.slice());
+      f.glb.items.forEach((item, index) => {
+        if (!baselineItems.has(item.name)) baselineItems.set(item.name, item.data.slice());
+        baselineById.set((n << 16) | index, item.data.slice());
+      });
     }
     const loaded = [...files.keys()].sort((a, b) => a - b)
       .map(n => files.get(n).filename).join(", ");
@@ -1183,9 +1452,10 @@ if (typeof document !== "undefined") (function initUI() {
 
   function resetSession(clearRecovery = true) {
     if (clearRecovery) clearStoredSession();
-    files.clear(); levels.clear(); dirty.clear(); undoStacks.clear(); redoStacks.clear(); baselineItems.clear();
+    files.clear(); levels.clear(); dirty.clear(); undoStacks.clear(); redoStacks.clear();
+    baselineItems.clear(); baselineById.clear();
     picCache.clear(); tilesetStart.clear(); spriteLibs.clear(); flatsLibs.clear();
-    dirtyLibs.clear(); libUndo.clear(); libRedo.clear(); dirtyFlats.clear();
+    dirtyLibs.clear(); libUndo.clear(); libRedo.clear(); dirtyFlats.clear(); dirtyPics.clear();
     musicSources.clear(); musicAssignments.clear(); dirtyMusicSlots.clear();
     mapIndex = []; palette = null; curMap = null; curTile = null; curLibSel = null;
     directoryHandle = null; directorySaveConfirmed = false;
@@ -1193,6 +1463,7 @@ if (typeof document !== "undefined") (function initUI() {
     marquee = dragState = spriteClipboard = null; customMusicSerial = 0;
     lastModRollback = null; $("modUndoBtn").disabled = true;
     $("flatsForm").style.display = "none";
+    resetArtPreview();
   }
 
   function initializeMusic() {
@@ -1215,6 +1486,8 @@ if (typeof document !== "undefined") (function initUI() {
     const opts = sbanks.map(b => `<option value="${b}">G${b + 1}</option>`).join("");
     $("spriteBank").innerHTML = opts;
     $("libBank").innerHTML = opts;
+    $("artFile").innerHTML = [...files.keys()].sort((a, b) => a - b)
+      .map(num => `<option value="${num}">${esc(files.get(num).filename)}</option>`).join("");
   }
 
   // ---- map lifecycle ------------------------------------------------------
@@ -1333,6 +1606,7 @@ if (typeof document !== "undefined") (function initUI() {
       const id = itemId(`FLATSG${bank + 1}_ITM`);
       if (id >= 0) nums.add(id >> 16);
     }
+    for (const id of dirtyPics) if (files.get(id >> 16)?.glb.items[id & 0xFFFF]) nums.add(id >> 16);
     for (const slot of dirtyMusicSlots) {
       const id = itemId(slot);
       if (id >= 0) nums.add(id >> 16);
@@ -1349,7 +1623,7 @@ if (typeof document !== "undefined") (function initUI() {
       return;
     }
     $("saveBtn").textContent = `${verb} ${nums.map(n => files.get(n).filename).join(" + ")}` +
-      ` (${dirty.size + dirtyLibs.size + dirtyFlats.size + dirtyMusicSlots.size} edited)`;
+      ` (${dirty.size + dirtyLibs.size + dirtyFlats.size + dirtyPics.size + dirtyMusicSlots.size} edited)`;
   }
 
   const setStatus = t => $("status").textContent = t;
@@ -1897,8 +2171,8 @@ if (typeof document !== "undefined") (function initUI() {
   // ---- Library tab: edit SPRITE records + flight paths -----------------------
   let libSel = -1;                    // index into current lib bank
   const dirtyLibs = new Set();        // bank numbers with edits
-  const libUndo = new Map();          // bank -> [json snapshots]
-  const libRedo = new Map();          // bank -> [json snapshots]
+  const libUndo = new Map();          // bank -> [{lib JSON, optional artwork action}]
+  const libRedo = new Map();          // bank -> [{lib JSON, optional artwork action}]
   const LIB_FIELDS = [                // curated editable stats
     ["hits", "hit points"], ["money", "bounty $"], ["movespeed", "move speed"],
     ["shootframe", "shoot rate"], ["shootcnt", "shots/burst"], ["shootstart", "shoot delay"],
@@ -1909,15 +2183,52 @@ if (typeof document !== "undefined") (function initUI() {
   const curLib = () => bankData(spriteLibs, +$("libBank").value);
   const curEntry = () => (libSel >= 0 ? curLib()[libSel] : null);
 
-  function pushLibUndo() {
+  function pushLibUndo(art = null) {
     const bank = +$("libBank").value;
     if (!libUndo.has(bank)) libUndo.set(bank, []);
     const st = libUndo.get(bank);
-    st.push(JSON.stringify(curLib()));
+    st.push({ lib: JSON.stringify(curLib()), art });
     if (st.length > 100) st.shift();
     libRedo.delete(bank);
     updateUndoBtn();
   }
+
+  function remapDirtyPicIds(filenum, start, delta, removed = 0) {
+    const updated = [];
+    for (const id of dirtyPics) {
+      if ((id >> 16) !== filenum) { updated.push(id); continue; }
+      const index = id & 0xFFFF;
+      if (removed && index >= start && index < start + removed) continue;
+      updated.push((filenum << 16) | (index >= start + removed ? index + delta : index));
+    }
+    dirtyPics.clear(); for (const id of updated) dirtyPics.add(id);
+  }
+
+  function applyLibArtAction(action) {
+    if (!action) return null;
+    const items = files.get(action.filenum)?.glb.items;
+    if (!items) throw new Error(`FILE${String(action.filenum).padStart(4, "0")}.GLB is not loaded`);
+    if (action.op === "remove") {
+      const removed = items.slice(action.start, action.start + action.count).map(item =>
+        ({ flags: item.flags, name: item.name, data: item.data.slice() }));
+      if (removed.length !== action.count) throw new Error("appended artwork can no longer be undone safely");
+      items.splice(action.start, action.count);
+      remapDirtyPicIds(action.filenum, action.start, -action.count, action.count);
+      picCache.clear(); tilesetStart.clear();
+      return { op: "insert", filenum: action.filenum, start: action.start, items: removed };
+    }
+    if (action.op === "insert") {
+      remapDirtyPicIds(action.filenum, action.start, action.items.length);
+      items.splice(action.start, 0, ...action.items.map(item =>
+        ({ flags: item.flags, name: item.name, data: item.data.slice() })));
+      for (let i = 0; i < action.items.length; i++) dirtyPics.add((action.filenum << 16) | (action.start + i));
+      picCache.clear(); tilesetStart.clear();
+      return { op: "remove", filenum: action.filenum, start: action.start, count: action.items.length };
+    }
+    throw new Error(`unknown artwork undo operation ${action.op}`);
+  }
+
+  const libSnapshot = value => typeof value === "string" ? { lib: value, art: null } : value;
 
   function popLibUndo() {
     const bank = +$("libBank").value;
@@ -1925,9 +2236,11 @@ if (typeof document !== "undefined") (function initUI() {
     if (!st || !st.length) return;
     if (!libRedo.has(bank)) libRedo.set(bank, []);
     const redo = libRedo.get(bank);
-    redo.push(JSON.stringify(curLib()));
+    const target = libSnapshot(st.pop());
+    const inverseArt = applyLibArtAction(target.art);
+    redo.push({ lib: JSON.stringify(curLib()), art: inverseArt });
     if (redo.length > 100) redo.shift();
-    spriteLibs.set(bank, JSON.parse(st.pop()));
+    spriteLibs.set(bank, JSON.parse(target.lib));
     dirtyLibs.add(bank);
     drawLibList(); selectLibEntry(Math.min(libSel, curLib().length - 1));
     updateSaveBtn(); updateUndoBtn(); redraw(); scheduleWarnings(); scheduleSessionSave();
@@ -1939,9 +2252,11 @@ if (typeof document !== "undefined") (function initUI() {
     if (!st || !st.length) return;
     if (!libUndo.has(bank)) libUndo.set(bank, []);
     const undo = libUndo.get(bank);
-    undo.push(JSON.stringify(curLib()));
+    const target = libSnapshot(st.pop());
+    const inverseArt = applyLibArtAction(target.art);
+    undo.push({ lib: JSON.stringify(curLib()), art: inverseArt });
     if (undo.length > 100) undo.shift();
-    spriteLibs.set(bank, JSON.parse(st.pop()));
+    spriteLibs.set(bank, JSON.parse(target.lib));
     dirtyLibs.add(bank);
     drawLibList(); selectLibEntry(Math.min(libSel, curLib().length - 1));
     updateSaveBtn(); updateUndoBtn(); redraw(); scheduleWarnings(); scheduleSessionSave();
@@ -2017,109 +2332,280 @@ if (typeof document !== "undefined") (function initUI() {
     setStatus(`duplicated ${s.iname} as entry ${libSel} - engine picks up the new count automatically`);
   });
 
-  // ---- flight path canvas ------------------------------------------------------
-  const pcv = $("pathCanvas"), pctx = pcv.getContext("2d");
-  let ptf = { sc: 1, ox: 0, oy: 0 };          // world->canvas transform
-  let dragWpt = -1;
+  // ---- PNG artwork import ----------------------------------------------------
+  let pendingArt = [];
+  const artPreview = $("artPreview"), artCtx = artPreview.getContext("2d");
 
-  const wpts = () => {
-    const s = curEntry();
-    return s ? s.flightx.slice(0, Math.max(0, Math.min(s.numflight, 30)))
-      .map((x, i) => [x, s.flighty[i]]) : [];
-  };
+  function resetArtPreview(message = "Choose artwork to preview it in the game palette.") {
+    pendingArt = []; $("artApplyBtn").disabled = true; $("artInfo").textContent = message;
+    artCtx.fillStyle = "#0b0c0f"; artCtx.fillRect(0, 0, artPreview.width, artPreview.height);
+  }
+
+  function artFrameNames(base, count) {
+    base = String(base || "").trim().toUpperCase();
+    if (!/^[A-Z0-9_]{1,15}$/.test(base)) throw new Error("item name must be 1-15 letters, numbers, or underscores");
+    if (count === 1) return [base];
+    const suffix = base.endsWith("_PIC") ? "_PIC" : "", stem = suffix ? base.slice(0, -4) : base;
+    const names = Array.from({ length: count }, (_, i) => {
+      if (!i) return base;
+      const serial = String(i + 1), room = 15 - suffix.length - serial.length;
+      return `${stem.slice(0, room)}${serial}${suffix}`;
+    });
+    if (new Set(names).size !== names.length)
+      throw new Error("item name is too long to generate unique frame names; choose a shorter name");
+    return names;
+  }
+
+  async function decodePng(file) {
+    if (!/\.png$/i.test(file.name) && file.type !== "image/png") throw new Error(`${file.name} is not a PNG file`);
+    if (file.size > 8 * 1024 * 1024) throw new Error(`${file.name} exceeds the 8 MiB import limit`);
+    let bitmap;
+    try { bitmap = await createImageBitmap(file); }
+    catch { throw new Error(`${file.name} could not be decoded as PNG`); }
+    try {
+      if (bitmap.width < 1 || bitmap.height < 1 || bitmap.width > 320 || bitmap.height > 200)
+        throw new Error(`${file.name} is ${bitmap.width}×${bitmap.height}; maximum is 320×200`);
+      const cv = document.createElement("canvas"); cv.width = bitmap.width; cv.height = bitmap.height;
+      const cx = cv.getContext("2d", { willReadFrequently: true }); cx.drawImage(bitmap, 0, 0);
+      const rgba = cx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      const indexed = quantizeRgba(bitmap.width, bitmap.height, rgba, palette);
+      return { filename: file.name, w: bitmap.width, h: bitmap.height, ...indexed };
+    } finally { bitmap.close(); }
+  }
+
+  function drawArtPreview(frame) {
+    const cv = document.createElement("canvas"); cv.width = frame.w; cv.height = frame.h;
+    const image = cv.getContext("2d").createImageData(frame.w, frame.h);
+    for (let i = 0; i < frame.pixels.length; i++) if (frame.mask[i]) {
+      const color = palette[frame.pixels[i]], o = i * 4;
+      image.data[o] = color[0]; image.data[o + 1] = color[1]; image.data[o + 2] = color[2]; image.data[o + 3] = 255;
+    }
+    cv.getContext("2d").putImageData(image, 0, 0);
+    artCtx.fillStyle = "#0b0c0f"; artCtx.fillRect(0, 0, artPreview.width, artPreview.height);
+    artCtx.imageSmoothingEnabled = false;
+    const scale = Math.min(artPreview.width / frame.w, artPreview.height / frame.h, 4);
+    const w = frame.w * scale, h = frame.h * scale;
+    artCtx.drawImage(cv, (artPreview.width - w) / 2, (artPreview.height - h) / 2, w, h);
+  }
+
+  function updateArtAction() {
+    const action = $("artAction").value, append = action === "append-sprite";
+    $("artAppendOptions").style.display = append ? "flex" : "none";
+    $("artInput").multiple = action !== "replace-tile";
+    if (append) {
+      const id = itemId(`SPRITE${+$('libBank').value + 1}_ITM`);
+      if (id >= 0) $("artFile").value = String(id >> 16);
+    }
+    resetArtPreview(); $("artInput").value = "";
+  }
+
+  $("artAction").addEventListener("change", updateArtAction);
+  $("artInput").addEventListener("change", async e => {
+    resetArtPreview("Reading PNG artwork…");
+    try {
+      const chosen = [...e.target.files];
+      if (!chosen.length) return resetArtPreview();
+      const action = $("artAction").value;
+      if (action === "replace-tile" && chosen.length !== 1)
+        throw new Error("tile replacement accepts exactly one PNG");
+      if (action === "replace-sprite") {
+        const entry = curEntry(), expected = Math.max(1, entry?.num_frames || 0);
+        if (!entry) throw new Error("select a Library entry first");
+        if (chosen.length !== expected) throw new Error(`this sprite uses ${expected} frame(s); choose exactly ${expected} PNG file(s)`);
+      }
+      pendingArt = [];
+      for (const file of chosen) pendingArt.push(await decodePng(file));
+      if (pendingArt.some(frame => frame.w !== pendingArt[0].w || frame.h !== pendingArt[0].h))
+        throw new Error("all frames must use the same dimensions");
+      if ($("artAction").value === "replace-tile" && (pendingArt[0].w !== 32 || pendingArt[0].h !== 32))
+        throw new Error("Raptor tiles must be exactly 32×32 pixels");
+      drawArtPreview(pendingArt[0]);
+      $("artInfo").textContent = `${pendingArt.length} frame(s), ${pendingArt[0].w}×${pendingArt[0].h}, quantized to PALETTE_DAT`;
+      $("artApplyBtn").disabled = false;
+    } catch (err) { resetArtPreview(err.message); }
+    finally { e.target.value = ""; }
+  });
+
+  $("artApplyBtn").addEventListener("click", () => {
+    try {
+      if (!pendingArt.length) throw new Error("choose PNG artwork first");
+      const action = $("artAction").value;
+      if (action === "replace-tile") {
+        if (!curTile) throw new Error("select a tile in the Tiles tab first");
+        const start = bankData(tilesetStart, curTile.bank), id = start + curTile.flats;
+        if (start < 0) throw new Error("selected tile graphic is not loaded");
+        validatePic(byId(id).data);
+        byId(id).data = encodePic(pendingArt[0].w, pendingArt[0].h,
+          pendingArt[0].pixels, pendingArt[0].mask, GTYPE_PIC);
+        dirtyPics.add(id); picCache.delete(id); drawTileGrid(); selectTile(curTile.bank, curTile.flats); redraw();
+        setStatus(`replaced tile graphic ${byId(id).name || itemRef(id >> 16, id & 0xFFFF)}`);
+      } else if (action === "replace-sprite") {
+        const entry = curEntry();
+        if (!entry) throw new Error("select a Library entry first");
+        const id = itemId(entry.iname);
+        if (id < 0) throw new Error(`${entry.iname} is not loaded`);
+        const frameCount = Math.max(1, entry.num_frames || 0);
+        if (pendingArt.length !== frameCount) throw new Error(`this sprite uses ${frameCount} frame(s); choose exactly ${frameCount} PNG file(s)`);
+        for (let i = 0; i < frameCount; i++) {
+          const frameId = id + i;
+          if ((frameId >> 16) !== (id >> 16) || !files.get(id >> 16)?.glb.items[frameId & 0xFFFF])
+            throw new Error(`${entry.iname} frame ${i + 1} is not loaded`);
+          const item = byId(frameId);
+          validatePic(item.data);
+          item.data = encodePic(pendingArt[i].w, pendingArt[i].h,
+            pendingArt[i].pixels, pendingArt[i].mask, GTYPE_SPRITE);
+          dirtyPics.add(frameId); picCache.delete(frameId);
+        }
+        drawLibList(); redraw();
+        setStatus(`replaced ${frameCount} sprite frame(s) starting at ${entry.iname}`);
+      } else {
+        const entry = curEntry();
+        if (!entry) throw new Error("select a Library entry to receive the new frames");
+        const names = artFrameNames($("artName").value, pendingArt.length);
+        const duplicate = names.find(name => itemId(name) >= 0);
+        if (duplicate) throw new Error(`${duplicate} already exists; choose a new first item name`);
+        const filenum = +$("artFile").value, file = files.get(filenum);
+        if (!file) throw new Error("target archive is not loaded");
+        const start = file.glb.items.length;
+        pushLibUndo({ op: "remove", filenum, start, count: pendingArt.length });
+        pendingArt.forEach((frame, i) => {
+          file.glb.items.push({ flags: 0, name: names[i], data: encodePic(frame.w, frame.h,
+            frame.pixels, frame.mask, GTYPE_SPRITE) });
+          dirtyPics.add((filenum << 16) | (start + i));
+        });
+        entry.iname = names[0]; entry.num_frames = pendingArt.length; markLibDirty(); selectLibEntry(libSel);
+        setStatus(`appended ${pendingArt.length} consecutive sprite frame(s) to ${file.filename}`);
+      }
+      updateSaveBtn(); scheduleSessionSave(); resetArtPreview("Artwork applied; save the affected archive when ready.");
+    } catch (err) { setStatus(`art import failed: ${err.message}`); }
+  });
+
+  // ---- flight path / gun / engine canvas --------------------------------------
+  const pcv = $("pathCanvas"), pctx = pcv.getContext("2d");
+  let ptf = { sc: 1, ox: 0, oy: 0 };          // data coordinates -> canvas
+  let dragVisualPoint = -1, activeVisualPoint = -1;
+
+  function visualLayer() {
+    const s = curEntry(), layer = $("pathLayer").value;
+    if (!s) return { layer, points: [], count: 0, max: 0 };
+    if (layer === "guns") return { layer, points: s.shootx.slice(0, Math.min(s.numguns, 24)).map((x, i) => [x, s.shooty[i]]),
+      count: s.numguns, max: 24, x: "shootx", y: "shooty", meta: "shoot_type", countField: "numguns" };
+    if (layer === "engines") return { layer, points: s.engx.slice(0, Math.min(s.numengs, 24)).map((x, i) => [x, s.engy[i]]),
+      count: s.numengs, max: 24, x: "engx", y: "engy", meta: "englx", countField: "numengs" };
+    return { layer, points: s.flightx.slice(0, Math.min(s.numflight, 30)).map((x, i) => [x, s.flighty[i]]),
+      count: s.numflight, max: 30, x: "flightx", y: "flighty", countField: "numflight" };
+  }
   const w2c = ([x, y]) => [x * ptf.sc + ptf.ox, y * ptf.sc + ptf.oy];
   const c2w = (x, y) => [Math.round((x - ptf.ox) / ptf.sc), Math.round((y - ptf.oy) / ptf.sc)];
 
   function drawPath() {
     const s = curEntry();
     if (!s) return;
-    const pts = [[0, 0], ...wpts()];
-    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
-    const span = Math.max(64, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
-    ptf.sc = Math.min((pcv.width - 30) / span, (pcv.height - 30) / span, 1.5);
+    const visual = visualLayer(), isPath = visual.layer === "path";
+    const gfx = !isPath ? spriteGfx(+$('libBank').value, libSel) : null;
+    const bounds = isPath ? [[0, 0], ...visual.points] : [[0, 0], [gfx?.width || 64, gfx?.height || 64]];
+    const xs = bounds.map(p => p[0]), ys = bounds.map(p => p[1]);
+    const spanX = Math.max(32, Math.max(...xs) - Math.min(...xs));
+    const spanY = Math.max(32, Math.max(...ys) - Math.min(...ys));
+    ptf.sc = Math.min((pcv.width - 30) / spanX, (pcv.height - 30) / spanY, isPath ? 1.5 : 4);
     ptf.ox = pcv.width / 2 - (Math.min(...xs) + Math.max(...xs)) / 2 * ptf.sc;
     ptf.oy = pcv.height / 2 - (Math.min(...ys) + Math.max(...ys)) / 2 * ptf.sc;
 
-    pctx.fillStyle = "#0b0c0f";
-    pctx.fillRect(0, 0, pcv.width, pcv.height);
-    const grounded = s.flighttype >= 3;
-    $("pathInfo").textContent = grounded
-      ? `${FLIGHT_NAMES[s.flighttype]}: waypoints unused`
-      : `${s.numflight} waypoints, ${FLIGHT_NAMES[s.flighttype]}`;
-
-    pctx.strokeStyle = grounded ? "#444" : "#3cdcdc";
-    pctx.beginPath();
-    pts.forEach((p, i) => { const [x, y] = w2c(p); i ? pctx.lineTo(x, y) : pctx.moveTo(x, y); });
-    pctx.stroke();
-    pts.forEach((p, i) => {
-      const [x, y] = w2c(p);
-      if (i === 0) {                                    // spawn anchor
-        pctx.fillStyle = "#e8a33d";
-        pctx.font = "12px sans-serif";
-        pctx.fillText("★", x - 5, y + 4);
-      } else {
-        pctx.fillStyle = i - 1 === s.repos && s.flighttype === 0 ? "#e8a33d" : "#3cdcdc";
-        pctx.beginPath(); pctx.arc(x, y, 4, 0, 7); pctx.fill();
-        pctx.fillStyle = "#0b0c0f";
-        pctx.font = "8px Consolas";
-        pctx.fillText(i - 1, x - (i > 10 ? 4 : 2), y + 3);
+    pctx.fillStyle = "#0b0c0f"; pctx.fillRect(0, 0, pcv.width, pcv.height);
+    $("mountValueBox").style.display = !isPath && activeVisualPoint >= 0 &&
+      activeVisualPoint < visual.count ? "flex" : "none";
+    if (isPath) {
+      const grounded = s.flighttype >= 3, pts = [[0, 0], ...visual.points];
+      $("pathInfo").textContent = grounded ? `${FLIGHT_NAMES[s.flighttype]}: waypoints unused`
+        : `${s.numflight} waypoints, ${FLIGHT_NAMES[s.flighttype]}`;
+      $("pathHint").innerHTML = "drag waypoint &middot; click = add &middot; right-click = delete &middot; &#9733; = spawn point";
+      pctx.strokeStyle = grounded ? "#444" : "#3cdcdc"; pctx.beginPath();
+      pts.forEach((point, i) => { const [x, y] = w2c(point); i ? pctx.lineTo(x, y) : pctx.moveTo(x, y); });
+      pctx.stroke();
+      const [anchorX, anchorY] = w2c([0, 0]); pctx.fillStyle = "#e8a33d"; pctx.font = "12px sans-serif";
+      pctx.fillText("★", anchorX - 5, anchorY + 4);
+    } else {
+      $("pathInfo").textContent = `${visual.count} ${visual.layer === "guns" ? "gun mounts" : "engine flares"}`;
+      $("pathHint").textContent = "drag marker · click = add · right-click = delete · select marker to edit its value";
+      if (gfx) {
+        const [x, y] = w2c([0, 0]); pctx.globalAlpha = .65; pctx.imageSmoothingEnabled = false;
+        pctx.drawImage(gfx, x, y, gfx.width * ptf.sc, gfx.height * ptf.sc); pctx.globalAlpha = 1;
       }
+    }
+    visual.points.forEach((point, i) => {
+      const [x, y] = w2c(point);
+      pctx.fillStyle = i === activeVisualPoint ? "#fff" : visual.layer === "guns" ? "#ff5050"
+        : visual.layer === "engines" ? "#e8a33d" : (i === s.repos && s.flighttype === 0 ? "#e8a33d" : "#3cdcdc");
+      pctx.beginPath(); pctx.arc(x, y, 5, 0, 7); pctx.fill();
+      pctx.fillStyle = "#0b0c0f"; pctx.font = "8px Consolas"; pctx.fillText(i, x - (i > 9 ? 4 : 2), y + 3);
     });
+    if (!isPath && activeVisualPoint >= 0 && activeVisualPoint < visual.count) {
+      $("mountValueLabel").textContent = visual.layer === "guns" ? "shot type" : "flame width";
+      $("mountValue").value = s[visual.meta][activeVisualPoint];
+    }
   }
 
-  function wptAt(cx, cy) {
-    const s = curEntry();
-    if (!s) return -1;
-    const pts = wpts();
-    for (let i = pts.length - 1; i >= 0; i--) {
-      const [x, y] = w2c(pts[i]);
-      if (Math.hypot(cx - x, cy - y) <= 7) return i;
+  function visualPointAt(cx, cy) {
+    const points = visualLayer().points;
+    for (let i = points.length - 1; i >= 0; i--) {
+      const [x, y] = w2c(points[i]);
+      if (Math.hypot(cx - x, cy - y) <= 8) return i;
     }
     return -1;
   }
+
+  function clampShort(value) { return Math.max(-32768, Math.min(32767, value)); }
 
   function pathMouse(e) {
     const r = pcv.getBoundingClientRect();
     return [(e.clientX - r.left) * pcv.width / r.width, (e.clientY - r.top) * pcv.height / r.height];
   }
 
+  $("pathLayer").addEventListener("change", () => { activeVisualPoint = dragVisualPoint = -1; drawPath(); });
+  $("mountValue").addEventListener("change", () => {
+    const s = curEntry(), visual = visualLayer();
+    if (!s || !visual.meta || activeVisualPoint < 0 || activeVisualPoint >= visual.count) return;
+    pushLibUndo(); s[visual.meta][activeVisualPoint] = clampShort(+$('mountValue').value | 0);
+    markLibDirty(); drawPath();
+  });
+
   pcv.addEventListener("mousedown", e => {
-    const s = curEntry();
+    const s = curEntry(), visual = visualLayer();
     if (!s || e.button === 2) return;
-    const [cx, cy] = pathMouse(e);
-    const hit = wptAt(cx, cy);
+    const [cx, cy] = pathMouse(e), hit = visualPointAt(cx, cy);
     pushLibUndo();
-    if (hit >= 0) dragWpt = hit;
-    else if (s.numflight < 30) {                        // append waypoint
-      const [wx, wy] = c2w(cx, cy);
-      s.flightx[s.numflight] = wx; s.flighty[s.numflight] = wy;
-      s.numflight++;
-      dragWpt = s.numflight - 1;
+    if (hit >= 0) { activeVisualPoint = dragVisualPoint = hit; drawPath(); }
+    else if (visual.count < visual.max) {
+      const [wx, wy] = c2w(cx, cy), index = visual.count;
+      s[visual.x][index] = clampShort(wx); s[visual.y][index] = clampShort(wy);
+      if (visual.meta) s[visual.meta][index] = 0;
+      s[visual.countField]++; activeVisualPoint = dragVisualPoint = index;
       markLibDirty(); drawPath();
     }
   });
   pcv.addEventListener("mousemove", e => {
     const s = curEntry();
-    if (dragWpt < 0 || !s) return;
-    const [cx, cy] = pathMouse(e);
-    [s.flightx[dragWpt], s.flighty[dragWpt]] = c2w(cx, cy);
+    if (dragVisualPoint < 0 || !s) return;
+    const visual = visualLayer();
+    if (dragVisualPoint >= visual.count) return;
+    const [cx, cy] = pathMouse(e), [wx, wy] = c2w(cx, cy);
+    s[visual.x][dragVisualPoint] = clampShort(wx); s[visual.y][dragVisualPoint] = clampShort(wy);
     markLibDirty(); drawPath();
   });
-  window.addEventListener("mouseup", () => dragWpt = -1);
+  window.addEventListener("mouseup", () => dragVisualPoint = -1);
   pcv.addEventListener("contextmenu", e => {
     e.preventDefault();
-    const s = curEntry();
+    const s = curEntry(), visual = visualLayer();
     if (!s) return;
-    const [cx, cy] = pathMouse(e);
-    const hit = wptAt(cx, cy);
-    if (hit >= 0 && s.numflight > 0) {
-      pushLibUndo();
-      s.flightx.splice(hit, 1); s.flightx.push(0);
-      s.flighty.splice(hit, 1); s.flighty.push(0);
-      s.numflight--;
-      if (s.repos >= s.numflight) s.repos = Math.max(0, s.numflight - 1);
-      markLibDirty(); drawPath(); selectLibEntry(libSel);
+    const [cx, cy] = pathMouse(e), hit = visualPointAt(cx, cy);
+    if (hit < 0 || visual.count <= 0) return;
+    pushLibUndo();
+    for (const field of [visual.x, visual.y, ...(visual.meta ? [visual.meta] : [])]) {
+      s[field].splice(hit, 1); s[field].push(0);
     }
+    s[visual.countField]--;
+    if (visual.layer === "path" && s.repos >= s.numflight) s.repos = Math.max(0, s.numflight - 1);
+    activeVisualPoint = -1; markLibDirty(); drawPath(); selectLibEntry(libSel);
   });
 
   function commitLib(bank) {
@@ -2186,12 +2672,14 @@ if (typeof document !== "undefined") (function initUI() {
     const f = e.target.files[0];
     if (!f) return;
     try {
-      const data = new Uint8Array(await f.arrayBuffer());
+      let data = new Uint8Array(await f.arrayBuffer());
+      const wasMidi = data.length >= 4 && data[0] === 0x4D && data[1] === 0x54 && data[2] === 0x68 && data[3] === 0x64;
+      if (wasMidi) data = midiToMus(data);
       const info = validateMus(data);
       const key = `custom:${++customMusicSerial}`;
-      musicSources.set(key, { label: `${f.name} (custom)`, data });
+      musicSources.set(key, { label: `${f.name}${wasMidi ? " (MIDI→MUS)" : " (custom)"}`, data });
       applyMusicSource(musicSlotForMap(), key);
-      setStatus(`imported ${f.name}: ${info.scoreLen} score bytes, ${info.channels} channel(s)`);
+      setStatus(`${wasMidi ? "converted" : "imported"} ${f.name}: ${info.scoreLen} MUS score bytes, ${info.channels} channel(s)`);
     } catch (err) { setStatus(`music import failed: ${err.message}`); }
     e.target.value = "";
   });
@@ -2277,6 +2765,8 @@ if (typeof document !== "undefined") (function initUI() {
     return Uint8Array.from(binary, char => char.charCodeAt(0));
   }
 
+  const itemRef = (filenum, index) => `FILE${String(filenum).padStart(4, "0")}.GLB#${index}`;
+
   async function exportRapmod() {
     const mod = { format: "rapmod", version: 1, requires: {} };
     const requireItem = async name => {
@@ -2318,7 +2808,22 @@ if (typeof document !== "undefined") (function initUI() {
         mus: bytesToBase64(byId(id).data) };
     }
     if (Object.keys(music).length) mod.music = music;
-    if (!mod.maps && !mod.libs && !mod.flats && !mod.music)
+    const pics = [];
+    for (const [filenum, file] of [...files].sort((a, b) => a[0] - b[0])) {
+      for (let index = 0; index < file.glb.items.length; index++) {
+        const item = file.glb.items[index];
+        try { validatePic(item.data); } catch { continue; }
+        const id = (filenum << 16) | index, base = baselineById.get(id);
+        if (base && bytesEqual(base, item.data)) continue;
+        if (base) {
+          const ref = itemRef(filenum, index);
+          pics.push({ op: "replace", file: filenum, index, name: item.name, pic: bytesToBase64(item.data) });
+          mod.requires[ref] = `sha256:${await sha256(base)}`;
+        } else pics.push({ op: "append", file: filenum, name: item.name, pic: bytesToBase64(item.data) });
+      }
+    }
+    if (pics.length) { mod.version = 2; mod.pics = pics; }
+    if (!mod.maps && !mod.libs && !mod.flats && !mod.music && !mod.pics)
       throw new Error("nothing differs from the loaded base archives");
     const bytes = new TextEncoder().encode(JSON.stringify(mod, null, 2));
     download(bytes, `raptor-${new Date().toISOString().slice(0, 10)}.rapmod`);
@@ -2340,15 +2845,16 @@ if (typeof document !== "undefined") (function initUI() {
   }
 
   async function prepareRapmod(mod) {
-    const supported = ["format", "version", "requires", "maps", "libs", "flats", "music"];
+    const supported = ["format", "version", "requires", "maps", "libs", "flats", "music", "pics"];
     if (mod && typeof mod === "object" && !Array.isArray(mod)) {
       const unknown = Object.keys(mod).find(key => !supported.includes(key));
       if (unknown) throw new Error(`rapmod section ${unknown} is not supported; the mod may have been made with a newer editor`);
     }
     assertObjectKeys(mod, supported, "rapmod");
     if (mod.format !== "rapmod") throw new Error("not a rapmod file");
-    if (mod.version !== 1) throw new Error(mod.version > 1
+    if (mod.version !== 1 && mod.version !== 2) throw new Error(mod.version > 2
       ? "this mod was made with a newer editor" : `unsupported rapmod version ${mod.version}`);
+    if (mod.version === 1 && mod.pics !== undefined) throw new Error("rapmod v1 cannot contain embedded artwork");
     assertObjectKeys(mod.requires, Object.keys(mod.requires || {}), "rapmod requires");
     const verified = new Map();
     const requireBase = async name => {
@@ -2359,8 +2865,22 @@ if (typeof document !== "undefined") (function initUI() {
       if (verified.get(name) !== mod.requires[name]) throw new Error(`${name} base hash does not match this game data`);
       return bytes;
     };
-    const prepared = { maps: new Map(), libs: new Map(), flats: new Map(), music: new Map(),
+    const requireExactBase = async (filenum, index, name) => {
+      const id = (filenum << 16) | index, ref = itemRef(filenum, index), bytes = baselineById.get(id);
+      if (!Object.hasOwn(mod.requires, ref)) throw new Error(`${ref} patch is missing its base hash`);
+      const item = files.get(filenum)?.glb.items[index];
+      if (!bytes || !item || item.name !== name) throw new Error(`${ref} does not match the loaded base archives`);
+      if (`sha256:${await sha256(bytes)}` !== mod.requires[ref])
+        throw new Error(`${ref} base hash does not match this game data`);
+      return bytes;
+    };
+    const prepared = { maps: new Map(), libs: new Map(), flats: new Map(), music: new Map(), pics: [],
       changedLibs: new Set(), changedFlats: new Set() };
+    const claimedNames = new Set([
+      ...Object.keys(mod.maps || {}), ...Object.keys(mod.music || {}),
+      ...Object.keys(mod.libs || {}).map(key => `SPRITE${key}_ITM`),
+      ...Object.keys(mod.flats || {}).map(key => `FLATSG${key}_ITM`),
+    ]);
     for (let bank = 0; bank < 4; bank++) {
       const lib = baselineItems.get(`SPRITE${bank + 1}_ITM`), flat = baselineItems.get(`FLATSG${bank + 1}_ITM`);
       if (lib) prepared.libs.set(bank, parseSpriteLib(lib));
@@ -2403,7 +2923,38 @@ if (typeof document !== "undefined") (function initUI() {
         validateMus(data); prepared.music.set(name, { label: String(patch.label || name), data });
       }
     }
-    if (!prepared.maps.size && !prepared.music.size && !prepared.changedLibs.size && !prepared.changedFlats.size)
+    if (mod.pics !== undefined) {
+      if (!Array.isArray(mod.pics)) throw new Error("rapmod pics must be an array");
+      const names = new Set([...files.values()].flatMap(file => file.glb.items.map(item => item.name)));
+      const targets = new Set();
+      for (let patchIndex = 0; patchIndex < mod.pics.length; patchIndex++) {
+        const patch = mod.pics[patchIndex], label = `PIC patch ${patchIndex}`;
+        assertObjectKeys(patch, ["op", "file", "index", "name", "pic"], label);
+        const name = patch.name;
+        if (typeof name !== "string" || name.length > 15 || /[^\x20-\x7E]/.test(name) ||
+            patch.op === "append" && !name.length)
+          throw new Error(`invalid PIC item name ${name}`);
+        const data = base64ToBytes(patch.pic, `${name} PIC`); validatePic(data);
+        if (patch.op === "replace") {
+          intField(patch.file, `${name} archive`, 0, 15);
+          intField(patch.index, `${name} item index`, 0, 0xFFFF);
+          const id = (patch.file << 16) | patch.index, ref = itemRef(patch.file, patch.index);
+          if (targets.has(ref)) throw new Error(`${ref} has more than one PIC replacement`);
+          const base = await requireExactBase(patch.file, patch.index, name);
+          validatePic(base);
+          if (claimedNames.has(name)) throw new Error(`${name} is already patched by another rapmod section`);
+          targets.add(ref); prepared.pics.push({ op: "replace", id, name, data });
+        } else if (patch.op === "append") {
+          if (names.has(name)) throw new Error(`${name} already exists in the loaded archives`);
+          if (patch.index !== undefined) throw new Error(`${name} append must not specify an item index`);
+          intField(patch.file, `${name} target archive`, 0, 15);
+          if (!files.has(patch.file)) throw new Error(`FILE${String(patch.file).padStart(4, "0")}.GLB is not loaded`);
+          names.add(name); prepared.pics.push({ op: "append", file: patch.file, name, data });
+        } else throw new Error(`${name} PIC operation must be replace or append`);
+      }
+    }
+    if (!prepared.maps.size && !prepared.music.size && !prepared.pics.length &&
+        !prepared.changedLibs.size && !prepared.changedFlats.size)
       throw new Error("rapmod contains no changes");
     return prepared;
   }
@@ -2415,8 +2966,10 @@ if (typeof document !== "undefined") (function initUI() {
       undoStacks: cloneEntries(undoStacks), redoStacks: cloneEntries(redoStacks),
       libUndo: cloneEntries(libUndo), libRedo: cloneEntries(libRedo),
       musicSources: cloneEntries(musicSources), musicAssignments: cloneEntries(musicAssignments),
-      dirty: [...dirty], dirtyLibs: [...dirtyLibs], dirtyFlats: [...dirtyFlats], dirtyMusicSlots: [...dirtyMusicSlots],
-      fileData: [...files].map(([num, file]) => [num, file.glb.items.map(item => item.data.slice())]),
+      dirty: [...dirty], dirtyLibs: [...dirtyLibs], dirtyFlats: [...dirtyFlats], dirtyPics: [...dirtyPics],
+      dirtyMusicSlots: [...dirtyMusicSlots],
+      fileItems: [...files].map(([num, file]) => [num, file.glb.items.map(item =>
+        ({ flags: item.flags, name: item.name, data: item.data.slice() }))]),
     };
   }
 
@@ -2428,9 +2981,10 @@ if (typeof document !== "undefined") (function initUI() {
     restoreMap(libUndo, snapshot.libUndo); restoreMap(libRedo, snapshot.libRedo);
     restoreMap(musicSources, snapshot.musicSources); restoreMap(musicAssignments, snapshot.musicAssignments);
     restoreSet(dirty, snapshot.dirty); restoreSet(dirtyLibs, snapshot.dirtyLibs);
-    restoreSet(dirtyFlats, snapshot.dirtyFlats); restoreSet(dirtyMusicSlots, snapshot.dirtyMusicSlots);
-    for (const [num, data] of snapshot.fileData)
-      files.get(num).glb.items.forEach((item, i) => { item.data = data[i]; });
+    restoreSet(dirtyFlats, snapshot.dirtyFlats); restoreSet(dirtyPics, snapshot.dirtyPics);
+    restoreSet(dirtyMusicSlots, snapshot.dirtyMusicSlots);
+    for (const [num, items] of snapshot.fileItems) files.get(num).glb.items = items;
+    picCache.clear(); tilesetStart.clear();
     lastModRollback = null; $("modUndoBtn").disabled = true;
     openMap(snapshot.curMap); drawLibList(); updateMusicPanel(); updateSaveBtn(); scheduleSessionSave();
   }
@@ -2448,7 +3002,7 @@ if (typeof document !== "undefined") (function initUI() {
       for (const bank of prepared.changedLibs) {
         const lib = prepared.libs.get(bank);
         const current = bankData(spriteLibs, bank);
-        const stack = libUndo.get(bank) || []; stack.push(JSON.stringify(current));
+        const stack = libUndo.get(bank) || []; stack.push({ lib: JSON.stringify(current), art: null });
         if (stack.length > 100) stack.shift(); libUndo.set(bank, stack); libRedo.delete(bank);
         spriteLibs.set(bank, lib); dirtyLibs.add(bank);
       }
@@ -2462,6 +3016,17 @@ if (typeof document !== "undefined") (function initUI() {
         musicSources.set(key, { label: source.label, data: source.data.slice() });
         musicAssignments.set(name, key); dirtyMusicSlots.add(name);
       }
+      for (const picture of prepared.pics) {
+        let id;
+        if (picture.op === "replace") { id = picture.id; byId(id).data = picture.data.slice(); }
+        else {
+          const items = files.get(picture.file).glb.items;
+          id = (picture.file << 16) | items.length;
+          items.push({ flags: 0, name: picture.name, data: picture.data.slice() });
+        }
+        dirtyPics.add(id);
+      }
+      if (prepared.pics.length) { picCache.clear(); tilesetStart.clear(); }
       lastModRollback = rollback; $("modUndoBtn").disabled = false;
       openMap(curMap); drawLibList(); updateMusicPanel(); updateSaveBtn(); scheduleSessionSave();
     } catch (err) { restoreModRollback(rollback); throw err; }
@@ -2487,6 +3052,8 @@ if (typeof document !== "undefined") (function initUI() {
         prepared.changedFlats.size ? `flats banks: ${[...prepared.changedFlats].map(n => `G${n + 1}`).join(", ")}` : "",
         prepared.music.size ? `music: ${[...prepared.music.keys()].map(slot =>
           `${slot} (${mapsForMusicSlot(slot).join(", ")})`).join("; ")}` : "",
+        prepared.pics.length ? `artwork: ${prepared.pics.map(picture => picture.name || itemRef(
+          picture.id >> 16, picture.id & 0xFFFF)).join(", ")}` : "",
       ].filter(Boolean).join("\n");
       if (!confirm(`Import ${file.name}?\n\n${summary}\n\nCurrent edits in these sections will be overwritten.`)) {
         setStatus("mod import cancelled; no changes were applied"); return;
@@ -2571,7 +3138,7 @@ if (typeof document !== "undefined") (function initUI() {
       if (directoryHandle) await writeDirectoryOutputs(outputs);
       else outputs.forEach((output, i) => setTimeout(() =>
         download(output.bytes, output.file.filename), i * 400));
-      dirty.clear(); dirtyLibs.clear(); dirtyFlats.clear(); dirtyMusicSlots.clear();
+      dirty.clear(); dirtyLibs.clear(); dirtyFlats.clear(); dirtyPics.clear(); dirtyMusicSlots.clear();
       updateSaveBtn();
       if (directoryHandle) await persistSession(); else scheduleSessionSave();
       setStatus(directoryHandle
@@ -2629,7 +3196,7 @@ if (typeof document !== "undefined") (function initUI() {
     if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
   });
   window.addEventListener("beforeunload", e => {
-    if (dirty.size || dirtyLibs.size || dirtyFlats.size || dirtyMusicSlots.size) e.preventDefault();
+    if (dirty.size || dirtyLibs.size || dirtyFlats.size || dirtyPics.size || dirtyMusicSlots.size) e.preventDefault();
   });
   window.addEventListener("pagehide", persistSession);
   offerStoredSession();

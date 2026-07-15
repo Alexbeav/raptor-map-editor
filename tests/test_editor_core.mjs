@@ -13,11 +13,11 @@ const core = html.match(/\/\* =+ CORE ==[\s\S]*?\*\/([\s\S]*?)\/\* =+ END CORE/)
 if (!core) throw new Error("CORE block not found in index.html");
 const exports_ = {};
 new Function("exports", core[1] +
-  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus});"
+  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, validatePic, quantizeRgba, encodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus, midiToMus});"
 )(exports_);
 const { parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats,
-  decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings,
-  diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus } = exports_;
+  decodePic, validatePic, quantizeRgba, encodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings,
+  diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus, midiToMus } = exports_;
 
 let failures = 0;
 const check = (label, ok) => { console.log(`${ok ? "PASS" : "FAIL"}  ${label}`); if (!ok) failures++; };
@@ -54,6 +54,12 @@ new DataView(mus.buffer).setUint16(4, 1, true);
 new DataView(mus.buffer).setUint16(6, 16, true);
 mus[16] = 0x60;
 check("DMX MUS header validation", validateMus(mus).scoreLen === 1);
+const oddMus = new Uint8Array(20), oddDv = new DataView(oddMus.buffer);
+oddMus.set([0x4D, 0x55, 0x53, 0x1A]); oddDv.setUint16(4, 4, true); oddDv.setUint16(6, 16, true);
+oddMus.set([0x40, 10, 200, 0x60], 16);
+let strictMusRejected = false;
+try { validateMus(oddMus, true); } catch { strictMusRejected = true; }
+check("legacy MUS import tolerates semantic oddities", validateMus(oddMus).scoreLen === 4 && strictMusRejected);
 const syntheticFlats = [
   { linkflat: 0, bonus: 0, bounty: 0 },
   { linkflat: 0, bonus: 25, bounty: 150 },
@@ -95,6 +101,54 @@ check("rapmod bank diff/apply round trip", JSON.stringify(applyRecordBankPatch(b
 let unknownPatchRejected = false;
 try { applyMapPatch(patchBase, { newerField: [] }); } catch { unknownPatchRejected = true; }
 check("rapmod unknown map section rejected", unknownPatchRejected);
+
+const picGolden = JSON.parse(readFileSync(join(here, "pic_encoder_golden.json"), "utf8"));
+const grayPalette = Array.from({ length: 256 }, (_, i) => [i, i, i]);
+const quantized = quantizeRgba(picGolden.width, picGolden.height, Uint8Array.from(picGolden.rgba), grayPalette);
+const hex = bytes => Buffer.from(bytes).toString("hex");
+check("PNG quantizer matches Python golden pixels", eq(quantized.pixels, picGolden.pixels));
+check("PNG quantizer matches Python golden mask", eq(quantized.mask, picGolden.mask));
+check("GPIC encoder matches Python byte-for-byte", hex(encodePic(picGolden.width, picGolden.height,
+  quantized.pixels, quantized.mask, 1)) === picGolden.gpicHex);
+check("GSPRITE encoder matches Python byte-for-byte", hex(encodePic(picGolden.width, picGolden.height,
+  quantized.pixels, quantized.mask, 0)) === picGolden.gspriteHex);
+let oversizePicRejected = false;
+try { quantizeRgba(321, 1, new Uint8Array(321 * 4), grayPalette); } catch { oversizePicRejected = true; }
+check("oversized imported graphic rejected", oversizePicRejected);
+let truncatedPicRejected = false;
+try { validatePic(Uint8Array.from(Buffer.from(picGolden.gspriteHex, "hex").subarray(0, -1))); }
+catch { truncatedPicRejected = true; }
+check("truncated embedded PIC rejected", truncatedPicRejected);
+
+const be16 = value => [(value >> 8) & 255, value & 255];
+const be32 = value => [(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255];
+const vlq = value => { const out = [value & 127]; while ((value = Math.floor(value / 128))) out.unshift((value & 127) | 128); return out; };
+const midiTrack = events => [...Buffer.from("MTrk"), ...be32(events.length), ...events];
+const tempoTrack = [0, 0xFF, 0x51, 3, 0x07, 0xA1, 0x20,
+  ...vlq(140), 0xFF, 0x51, 3, 0x03, 0xD0, 0x90, 0, 0xFF, 0x2F, 0];
+const noteTrack = [0, 0xC0, 5, 0, 0x90, 60, 100, 0, 62, 80,
+  ...vlq(280), 0x80, 60, 0, 0, 62, 0, 0, 0xE0, 0, 64,
+  0, 0xB0, 7, 100, 0, 0x99, 35, 90, ...vlq(70), 0x89, 35, 0, 0, 0xFF, 0x2F, 0];
+const midi = Uint8Array.from([...Buffer.from("MThd"), ...be32(6), ...be16(1), ...be16(2), ...be16(140),
+  ...midiTrack(tempoTrack), ...midiTrack(noteTrack)]);
+const convertedMus = midiToMus(midi), convertedInfo = validateMus(convertedMus);
+check("format-1 MIDI converts to valid MUS", convertedInfo.scoreLen > 0 && convertedInfo.channels === 1);
+check("MIDI instrument table includes melodic and percussion patches",
+  JSON.stringify(convertedInfo.patches) === JSON.stringify([5, 135]));
+check("MIDI tempo map rescales 280 ticks to 52 Raptor MUS ticks",
+  convertedMus.subarray(convertedInfo.scoreStart, convertedInfo.scoreStart + convertedInfo.scoreLen).includes(52));
+let format2Rejected = false;
+try { const bad = midi.slice(); bad[9] = 2; midiToMus(bad); } catch { format2Rejected = true; }
+check("MIDI format 2 rejected", format2Rejected);
+let smpteRejected = false;
+try { const bad = midi.slice(); bad[12] = 0xE7; midiToMus(bad); } catch { smpteRejected = true; }
+check("SMPTE MIDI timing rejected", smpteRejected);
+const midiGolden = JSON.parse(readFileSync(join(here, "midi_converter_golden.json"), "utf8"));
+check("MIDI converter matches midi3mus 1.0.0 at Raptor's 70 Hz rate",
+  Buffer.from(midiToMus(Uint8Array.from(Buffer.from(midiGolden.midiHex, "hex")))).toString("hex") === midiGolden.musHex);
+const programOnly = Uint8Array.from([...Buffer.from("MThd"), ...be32(6), ...be16(0), ...be16(1), ...be16(96),
+  ...midiTrack([0, 0xC0, 5, 0, 0xFF, 0x2F, 0])]);
+check("MUS header counts control-only melodic channels", validateMus(midiToMus(programOnly)).channels === 1);
 
 const required = Array.from({ length: 5 }, (_, n) => join(dataDir, `FILE000${n}.GLB`));
 if (!required.every(existsSync)) {

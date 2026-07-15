@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -13,7 +14,7 @@ function loadCore() {
   if (!core) throw new Error("CORE block not found");
   const exports = {};
   new Function("exports", core[1] +
-    "\nObject.assign(exports, {buildGlb, parseGlb, buildMap, parseMap, buildSpriteLib, parseSpriteLib, buildFlats, parseFlats});"
+    "\nObject.assign(exports, {buildGlb, parseGlb, buildMap, parseMap, buildSpriteLib, parseSpriteLib, buildFlats, parseFlats, validateMus});"
   )(exports);
   return exports;
 }
@@ -38,14 +39,22 @@ function mus(channels) {
   return data;
 }
 
-function spriteRecord(hits = 1) {
+function midiFile() {
+  const be16 = value => [(value >> 8) & 255, value & 255];
+  const be32 = value => [(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255];
+  const track = [0, 0xC0, 5, 0, 0x90, 60, 100, 0x81, 0x0C, 0x80, 60, 0, 0, 0xFF, 0x2F, 0];
+  return Uint8Array.from([...Buffer.from("MThd"), ...be32(6), ...be16(0), ...be16(1), ...be16(140),
+    ...Buffer.from("MTrk"), ...be32(track.length), ...track]);
+}
+
+function spriteRecord(hits = 1, frames = 1) {
   const fields = ["item", "bonus", "exptype", "shotspace", "ground", "suck", "frame_rate",
     "num_frames", "countdown", "rewind", "animtype", "shadow", "bossflag", "hits", "money",
     "shootstart", "shootcnt", "shootframe", "movespeed", "numflight", "repos", "flighttype",
     "numguns", "numengs", "sfx", "song"];
   const entry = { iname: "TESTG1_PIC" };
   for (const field of fields) entry[field] = 0;
-  entry.num_frames = 1;
+  entry.num_frames = frames;
   entry.hits = hits;
   for (const field of ["shoot_type", "engx", "engy", "englx", "shootx", "shooty"])
     entry[field] = Array(24).fill(0);
@@ -69,15 +78,20 @@ function fixture() {
     { flags: 0, name: "TILE0G1_PIC", data: gpic(32, 32, 2) },
     { flags: 0, name: "TILE1G1_PIC", data: gpic(32, 32, 12) },
     { flags: 0, name: "ENDG1TILES", data: new Uint8Array() },
-    { flags: 0, name: "SPRITE1_ITM", data: core.buildSpriteLib([spriteRecord(), spriteRecord(5)]) },
+    { flags: 0, name: "SPRITE1_ITM", data: core.buildSpriteLib([spriteRecord(1, 2), spriteRecord(5)]) },
     { flags: 0, name: "FLATSG1_ITM", data: core.buildFlats([
       { linkflat: 0, bonus: 0, bounty: 0 },
       { linkflat: 0, bonus: 10, bounty: 25 },
     ]) },
     { flags: 0, name: "TESTG1_PIC", data: gpic(32, 32, 20) },
+    { flags: 0, name: "TEST2G1_PIC", data: gpic(32, 32, 21) },
     { flags: 0, name: "RAP8_MUS", data: mus(0) },
     { flags: 0, name: "RAP2_MUS", data: mus(1) },
     { flags: 0, name: "MAP1G1_MAP", data: core.buildMap(map) },
+    { flags: 0, name: "", data: gpic(2, 2, 31) },
+    { flags: 0, name: "", data: gpic(2, 2, 32) },
+    { flags: 0, name: "DUP_PIC", data: gpic(2, 2, 33) },
+    { flags: 0, name: "DUP_PIC", data: gpic(2, 2, 34) },
   ] });
   return { core, bytes };
 }
@@ -133,6 +147,22 @@ async function moveMapPointer(page, col, row) {
       clientY: rect.top + (cell.row * 32 + 16) * sy,
     }));
   }, { col, row });
+}
+
+async function setPngFiles(page, specs) {
+  await page.locator("#artInput").evaluate(async (input, images) => {
+    const transfer = new DataTransfer();
+    for (const image of images) {
+      const canvas = document.createElement("canvas"); canvas.width = image.width; canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      context.clearRect(0, 0, image.width, image.height);
+      context.fillStyle = image.color; context.fillRect(0, 0, image.width, image.height);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+      transfer.items.add(new File([blob], image.name, { type: "image/png" }));
+    }
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, specs);
 }
 
 async function mockDirectory(page, entries, options = {}) {
@@ -392,9 +422,10 @@ test("rapmod export imports transactionally into a clean session and rolls back"
   const modDownloadPromise = author.waitForEvent("download");
   await author.locator("#modExportBtn").click();
   const modDownload = await modDownloadPromise;
-  const modBytes = await readFile(await modDownload.path());
+  let modBytes = await readFile(await modDownload.path());
   const mod = JSON.parse(modBytes.toString("utf8"));
   expect(mod.format).toBe("rapmod"); expect(mod.version).toBe(1);
+  expect(mod.pics).toBeUndefined();
   expect(mod.maps.MAP1G1_MAP.tiles).toHaveLength(1);
   expect(mod.maps.MAP1G1_MAP.spriteGroups.length).toBeGreaterThan(0);
   expect(Object.keys(mod.libs["1"].fields[0].set)).toEqual(["hits"]);
@@ -403,6 +434,22 @@ test("rapmod export imports transactionally into a clean session and rolls back"
   expect(Object.keys(mod.requires)).toEqual(expect.arrayContaining([
     "MAP1G1_MAP", "SPRITE1_ITM", "FLATSG1_ITM", "RAP8_MUS",
   ]));
+  const original = core.parseGlb(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  const originalPicIndex = original.items.findIndex(entry => entry.name === "TESTG1_PIC");
+  const originalPic = original.items[originalPicIndex].data;
+  mod.requires[`FILE0001.GLB#${originalPicIndex}`] = `sha256:${createHash("sha256").update(originalPic).digest("hex")}`;
+  const unnamedPicIndex = original.items.findIndex(entry => entry.name === "");
+  const unnamedPic = original.items[unnamedPicIndex].data;
+  mod.requires[`FILE0001.GLB#${unnamedPicIndex}`] = `sha256:${createHash("sha256").update(unnamedPic).digest("hex")}`;
+  mod.pics = [
+    { op: "replace", file: 1, index: originalPicIndex, name: "TESTG1_PIC",
+      pic: Buffer.from(gpic(5, 4, 33)).toString("base64") },
+    { op: "append", file: 1, name: "MODNEW_PIC", pic: Buffer.from(gpic(3, 2, 44)).toString("base64") },
+    { op: "replace", file: 1, index: unnamedPicIndex, name: "",
+      pic: Buffer.from(gpic(2, 2, 55)).toString("base64") },
+  ];
+  mod.version = 2;
+  modBytes = Buffer.from(JSON.stringify(mod));
   await authorContext.close();
 
   const playerContext = await browser.newContext({ acceptDownloads: true });
@@ -426,6 +473,9 @@ test("rapmod export imports transactionally into a clean session and rolls back"
   expect(core.parseFlats(item("FLATSG1_ITM"))[1].bonus).toBe(30);
   expect(core.parseSpriteLib(item("SPRITE1_ITM"))[0].hits).toBe(40);
   expect(new DataView(item("RAP8_MUS").buffer, item("RAP8_MUS").byteOffset).getUint16(8, true)).toBe(1);
+  expect(new DataView(item("TESTG1_PIC").buffer, item("TESTG1_PIC").byteOffset).getInt32(12, true)).toBe(5);
+  expect(item("MODNEW_PIC")).toBeTruthy();
+  expect(applied.items[unnamedPicIndex].data[20]).toBe(55);
 
   await player.locator("#modUndoBtn").click();
   await expect(player.locator("#status")).toContainText("undid the last mod import");
@@ -450,10 +500,137 @@ test("rapmod export imports transactionally into a clean session and rolls back"
   await rejectMod(value => { value.music.RAP8_MUS.mus = Buffer.from("bad").toString("base64"); },
     "not a DMX MUS file");
   await rejectMod(value => { value.future = {}; }, "made with a newer editor");
+  await rejectMod(value => { value.pics[0].pic = Buffer.from("bad").toString("base64"); },
+    "PIC item is shorter than its header");
+  await rejectMod(value => {
+    value.pics[0].index = original.items.findIndex(entry => entry.name === "MAP1G1_MAP");
+    value.pics[0].name = "MAP1G1_MAP";
+    value.requires[`FILE0001.GLB#${value.pics[0].index}`] = value.requires.MAP1G1_MAP;
+  }, "unknown GFX_TYPE");
+
+  const legacy = structuredClone(mod); legacy.version = 1; delete legacy.pics;
+  player.once("dialog", dialog => dialog.accept());
+  await player.locator("#modInput").setInputFiles({
+    name: "legacy.rapmod", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(legacy)),
+  });
+  await expect(player.locator("#status")).toContainText("imported legacy.rapmod");
+  await player.locator("#modUndoBtn").click();
+  await expect(player.locator("#status")).toContainText("undid the last mod import");
 
   const rejectedDownloadPromise = player.waitForEvent("download");
   await player.locator("#saveBtn").click();
   const rejectedBytes = new Uint8Array(await readFile(await (await rejectedDownloadPromise).path()));
   expect(rejectedBytes).toEqual(bytes);
   await playerContext.close();
+});
+
+test("PNG import replaces tile/sprite art and appends consecutive frames", async ({ page }) => {
+  const { core, bytes } = fixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+
+  await page.locator("#tileGridCanvas").click({ position: { x: 17, y: 17 } });
+  await page.locator("#tabLib").click();
+  await page.locator("#libList div[data-i='0']").click();
+
+  await page.locator("#artAction").selectOption("replace-tile");
+  await setPngFiles(page, [{ name: "tile.png", width: 32, height: 32, color: "rgb(40,80,120)" }]);
+  await expect(page.locator("#artApplyBtn")).toBeEnabled();
+  await page.locator("#artApplyBtn").click();
+  await expect(page.locator("#status")).toContainText("replaced tile graphic TILE0G1_PIC");
+
+  await page.locator("#artAction").selectOption("replace-sprite");
+  await setPngFiles(page, [
+    { name: "sprite1.png", width: 6, height: 5, color: "rgba(200,80,20,0.8)" },
+    { name: "sprite2.png", width: 6, height: 5, color: "rgba(20,80,200,0.8)" },
+  ]);
+  await page.locator("#artApplyBtn").click();
+  await expect(page.locator("#status")).toContainText("replaced 2 sprite frame(s) starting at TESTG1_PIC");
+
+  await page.locator("#artAction").selectOption("append-sprite");
+  await page.locator("#artName").fill("AAAAAAAAAAAAA1");
+  await setPngFiles(page, Array.from({ length: 12 }, (_, i) =>
+    ({ name: `collision${i}.png`, width: 1, height: 1, color: "rgb(20,180,80)" })));
+  await page.locator("#artApplyBtn").click();
+  await expect(page.locator("#status")).toContainText("choose a shorter name");
+  await page.locator("#artName").fill("NEW_PIC");
+  await setPngFiles(page, [
+    { name: "frame1.png", width: 8, height: 6, color: "rgb(20,180,80)" },
+    { name: "frame2.png", width: 8, height: 6, color: "rgb(180,20,80)" },
+  ]);
+  await page.locator("#artApplyBtn").click();
+  await expect(page.locator("#status")).toContainText("appended 2 consecutive sprite frame(s)");
+
+  await page.locator("#undoBtn").click();
+  await expect(page.locator("#libIname")).toHaveValue("TESTG1_PIC");
+  await page.locator("#redoBtn").click();
+  await expect(page.locator("#libIname")).toHaveValue("NEW_PIC");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("#saveBtn").click();
+  const output = new Uint8Array(await readFile(await (await downloadPromise).path()));
+  const glb = core.parseGlb(output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
+  const item = name => glb.items.find(entry => entry.name === name);
+  expect(new DataView(item("TILE0G1_PIC").data.buffer, item("TILE0G1_PIC").data.byteOffset).getInt32(0, true)).toBe(1);
+  expect(new DataView(item("TESTG1_PIC").data.buffer, item("TESTG1_PIC").data.byteOffset).getInt32(12, true)).toBe(6);
+  expect(new DataView(item("TEST2G1_PIC").data.buffer, item("TEST2G1_PIC").data.byteOffset).getInt32(12, true)).toBe(6);
+  expect(glb.items.slice(-2).map(entry => entry.name)).toEqual(["NEW_PIC", "NEW2_PIC"]);
+  const lib = core.parseSpriteLib(item("SPRITE1_ITM").data);
+  expect(lib[0].iname).toBe("NEW_PIC"); expect(lib[0].num_frames).toBe(2);
+
+  const modDownloadPromise = page.waitForEvent("download");
+  await page.locator("#modExportBtn").click();
+  const mod = JSON.parse((await readFile(await (await modDownloadPromise).path())).toString("utf8"));
+  expect(mod.version).toBe(2);
+  expect(mod.pics.find(picture => picture.name === "TILE0G1_PIC")).toMatchObject({ op: "replace", file: 1 });
+  expect(mod.pics.find(picture => picture.name === "TESTG1_PIC")).toMatchObject({ op: "replace", file: 1 });
+  expect(mod.pics.find(picture => picture.name === "NEW_PIC")).toMatchObject({ op: "append", file: 1 });
+  expect(mod.pics.find(picture => picture.name === "NEW2_PIC")).toMatchObject({ op: "append", file: 1 });
+});
+
+test("gun mounts and engine flares edit visually and round-trip", async ({ page }) => {
+  const { core, bytes } = fixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+  await page.locator("#tabLib").click();
+  await page.locator("#libList div[data-i='0']").click();
+
+  await page.locator("#pathLayer").selectOption("guns");
+  await page.locator("#pathCanvas").click({ position: { x: 100, y: 90 } });
+  await expect(page.locator("#pathInfo")).toContainText("1 gun mounts");
+  await page.locator("#mountValue").fill("7"); await page.locator("#mountValue").press("Tab");
+
+  await page.locator("#pathLayer").selectOption("engines");
+  await page.locator("#pathCanvas").click({ position: { x: 130, y: 120 } });
+  await expect(page.locator("#pathInfo")).toContainText("1 engine flares");
+  await page.locator("#mountValue").fill("6"); await page.locator("#mountValue").press("Tab");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("#saveBtn").click();
+  const output = new Uint8Array(await readFile(await (await downloadPromise).path()));
+  const glb = core.parseGlb(output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
+  const lib = core.parseSpriteLib(glb.items.find(entry => entry.name === "SPRITE1_ITM").data);
+  expect(lib[0].numguns).toBe(1); expect(lib[0].shoot_type[0]).toBe(7);
+  expect(lib[0].numengs).toBe(1); expect(lib[0].englx[0]).toBe(6);
+  expect(lib[0].shootx[0]).not.toBe(lib[0].engx[0]);
+});
+
+test("MIDI imports convert locally to a valid shared-slot MUS", async ({ page }) => {
+  const { core, bytes } = fixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+  await page.locator("#tabMusic").click();
+  await page.locator("#musicInput").setInputFiles({
+    name: "custom.mid", mimeType: "audio/midi", buffer: Buffer.from(midiFile()),
+  });
+  await expect(page.locator("#status")).toContainText("converted custom.mid");
+  await expect(page.locator("#musicSelect")).toContainText("MIDI→MUS");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("#saveBtn").click();
+  const output = new Uint8Array(await readFile(await (await downloadPromise).path()));
+  const glb = core.parseGlb(output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
+  const converted = glb.items.find(entry => entry.name === "RAP8_MUS").data;
+  const info = core.validateMus(converted);
+  expect(info.channels).toBe(1); expect(info.patches).toEqual([5]);
 });

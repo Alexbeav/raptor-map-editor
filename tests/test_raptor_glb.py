@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 
 from raptor_glb import (  # noqa: E402
     GlbFile, GlbItem, GlbSet, apply_rapmod, build_flats, build_map,
-    build_sprite_lib, decrypt, encrypt, parse_flats, parse_map,
-    parse_sprite_lib, validate_mus,
+    build_sprite_lib, decrypt, encode_pic, encrypt, parse_flats, parse_map,
+    parse_sprite_lib, quantize_rgba, validate_mus, GTYPE_PIC, GTYPE_SPRITE,
 )
 
 
@@ -26,6 +26,17 @@ def empty_map():
 
 
 class CodecTests(unittest.TestCase):
+    def test_pic_encoder_matches_shared_golden(self):
+        golden = json.loads((Path(__file__).parent / "pic_encoder_golden.json").read_text())
+        palette = [(i, i, i) for i in range(256)]
+        pixels, mask = quantize_rgba(golden["width"], golden["height"], bytes(golden["rgba"]), palette)
+        self.assertEqual(list(pixels), golden["pixels"])
+        self.assertEqual(list(mask), golden["mask"])
+        self.assertEqual(encode_pic(golden["width"], golden["height"], pixels, mask, GTYPE_PIC).hex(),
+                         golden["gpicHex"])
+        self.assertEqual(encode_pic(golden["width"], golden["height"], pixels, mask, GTYPE_SPRITE).hex(),
+                         golden["gspriteHex"])
+
     def test_cipher_round_trip(self):
         raw = bytes((i * 37 + 11) & 255 for i in range(1000))
         self.assertEqual(decrypt(encrypt(raw)), raw)
@@ -72,19 +83,28 @@ class CodecTests(unittest.TestCase):
         ]
         base_mus = struct.pack("<4s6H", b"MUS\x1a", 1, 16, 0, 0, 0, 0) + b"\x60"
         changed_mus = struct.pack("<4s6H", b"MUS\x1a", 1, 16, 1, 0, 0, 0) + b"\x60"
+        base_pic = encode_pic(2, 2, bytes([1, 1, 1, 1]), bytes([1, 1, 1, 1]), GTYPE_PIC)
+        changed_pic = encode_pic(2, 2, bytes([2, 2, 2, 2]), bytes([1, 1, 1, 1]), GTYPE_PIC)
+        appended_pic = encode_pic(2, 2, bytes([3, 3, 3, 3]), bytes([1, 1, 1, 1]), GTYPE_SPRITE)
+        unnamed_pic = encode_pic(2, 2, bytes([4, 4, 4, 4]), bytes([1, 1, 1, 1]), GTYPE_PIC)
+        changed_unnamed_pic = encode_pic(2, 2, bytes([5, 5, 5, 5]), bytes([1, 1, 1, 1]), GTYPE_PIC)
         validate_mus(base_mus)
         archive = GlbFile([
             GlbItem(0, "MAP1G1_MAP", build_map(source_map)),
             GlbItem(0, "SPRITE1_ITM", build_sprite_lib(source_lib)),
             GlbItem(0, "FLATSG1_ITM", build_flats(source_flats)),
             GlbItem(0, "RAP8_MUS", base_mus),
+            GlbItem(0, "BASE_PIC", base_pic),
+            GlbItem(0, "", unnamed_pic),
         ])
         base_bytes = archive.build()
         hashes = {item.name: "sha256:" + hashlib.sha256(item.data).hexdigest()
                   for item in archive.items}
+        hashes["FILE0001.GLB#4"] = "sha256:" + hashlib.sha256(base_pic).hexdigest()
+        hashes["FILE0001.GLB#5"] = "sha256:" + hashlib.sha256(unnamed_pic).hexdigest()
         sprite = {"link": 1, "slib": 0, "x": 3, "y": 130, "game": 0, "level": 4}
         mod = {
-            "format": "rapmod", "version": 1, "requires": hashes,
+            "format": "rapmod", "version": 2, "requires": hashes,
             "maps": {"MAP1G1_MAP": {
                 "tiles": [{"r": 4, "c": 2, "value": {"flats": 1, "fgame": 0}}],
                 "spriteGroups": [{"at": 0, "delete": 0, "insert": [[sprite]]}],
@@ -92,6 +112,14 @@ class CodecTests(unittest.TestCase):
             "libs": {"1": {"fields": [{"index": 0, "set": {"hits": 40}}]}},
             "flats": {"1": {"fields": [{"index": 1, "set": {"bonus": 30}}]}},
             "music": {"RAP8_MUS": {"label": "replacement", "mus": base64.b64encode(changed_mus).decode()}},
+            "pics": [
+                {"op": "replace", "file": 1, "index": 4, "name": "BASE_PIC",
+                 "pic": base64.b64encode(changed_pic).decode()},
+                {"op": "append", "file": 1, "name": "NEW_PIC",
+                 "pic": base64.b64encode(appended_pic).decode()},
+                {"op": "replace", "file": 1, "index": 5, "name": "",
+                 "pic": base64.b64encode(changed_unnamed_pic).decode()},
+            ],
         }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,6 +144,9 @@ class CodecTests(unittest.TestCase):
             self.assertEqual(parse_sprite_lib(by_name["SPRITE1_ITM"])[0]["hits"], 40)
             self.assertEqual(parse_flats(by_name["FLATSG1_ITM"])[1]["bonus"], 30)
             self.assertEqual(by_name["RAP8_MUS"], changed_mus)
+            self.assertEqual(by_name["BASE_PIC"], changed_pic)
+            self.assertEqual(by_name["NEW_PIC"], appended_pic)
+            self.assertEqual(actual.items[5].data, changed_unnamed_pic)
 
             direct = GlbSet(data_dir)
             self.assertEqual(apply_rapmod(direct, copy.deepcopy(mod)), {1})
@@ -125,6 +156,10 @@ class CodecTests(unittest.TestCase):
                 ("hash", lambda value: value["requires"].__setitem__("MAP1G1_MAP", "sha256:" + "0" * 64)),
                 ("sprite", lambda value: value["maps"]["MAP1G1_MAP"]["spriteGroups"][0]["insert"][0][0].__setitem__("slib", 99)),
                 ("music", lambda value: value["music"]["RAP8_MUS"].__setitem__("mus", base64.b64encode(b"bad").decode())),
+                ("pic type confusion", lambda value: (value["pics"][0].__setitem__("index", 0),
+                                                       value["pics"][0].__setitem__("name", "MAP1G1_MAP"),
+                                                       value["requires"].__setitem__(
+                                                           "FILE0001.GLB#0", value["requires"]["MAP1G1_MAP"]))),
             ):
                 with self.subTest(rejection=label):
                     bad = copy.deepcopy(mod)
@@ -134,6 +169,18 @@ class CodecTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         apply_rapmod(clean, bad)
                     self.assertEqual(clean.files[1].build(), before)
+
+            v1 = copy.deepcopy(mod)
+            v1["version"] = 1; del v1["pics"]
+            legacy = GlbSet(data_dir)
+            self.assertEqual(apply_rapmod(legacy, v1), {1})
+
+    def test_mus_import_is_tolerant_but_strict_validation_rejects_odd_controllers(self):
+        score = bytes([0x40, 10, 200, 0x60])
+        mus = struct.pack("<4s6H", b"MUS\x1a", len(score), 16, 1, 0, 0, 0) + score
+        self.assertEqual(validate_mus(mus)["scoreLen"], len(score))
+        with self.assertRaises(ValueError):
+            validate_mus(mus, strict=True)
 
 
 if __name__ == "__main__":

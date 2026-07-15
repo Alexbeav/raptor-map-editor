@@ -12,5 +12,6 @@ __pycache__/
 *.json
 !package.json
 !package-lock.json
+!tests/*_golden.json
 test-results/
 playwright-report/

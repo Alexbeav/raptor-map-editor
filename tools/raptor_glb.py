@@ -365,51 +365,68 @@ def build_flats(flats: list[dict]) -> bytes:
 
 
 # --------------------------------------------------------------------------
-# RAPMOD v1 patches
+# RAPMOD v1/v2 patches
 # --------------------------------------------------------------------------
 
-def validate_mus(data: bytes) -> dict:
-    """Validate the structural subset of DMX MUS consumed by rapmod v1."""
-    if not isinstance(data, bytes) or len(data) < 16 or data[:4] != b"MUS\x1a":
-        raise ValueError("not a DMX MUS file (expected MUS\\x1A header)")
-    score_len, score_start, channels = struct.unpack_from("<HHH", data, 4)
-    if score_start < 16 or score_start + score_len > len(data):
-        raise ValueError("MUS score points outside the file")
+def validate_mus(data: bytes, strict: bool = False) -> dict:
+    """Validate DMX MUS structure; optionally enforce encoder-safe semantics."""
+    if not isinstance(data, bytes) or len(data) < 16 or len(data) > 4 * 1024 * 1024 or data[:4] != b"MUS\x1a":
+        raise ValueError("not a DMX MUS file (bad header)")
+    score_len, score_start, channels, secondary, instrument_count = struct.unpack_from("<5H", data, 4)
+    if strict and (channels > 15 or secondary > 15):
+        raise ValueError("MUS header has too many channels")
+    if (score_start < 16 or score_start + score_len > len(data)
+            or strict and score_start < 16 + instrument_count * 2):
+        raise ValueError("MUS score or instrument table points outside the file")
+    patches = (list(struct.unpack_from(f"<{instrument_count}H", data, 16))
+               if instrument_count and 16 + instrument_count * 2 <= score_start else [])
     pos, end, ended = score_start, score_start + score_len, False
 
-    def take(count: int) -> bytes:
+    def take() -> int:
         nonlocal pos
-        if pos + count > end:
+        if pos >= end:
             raise ValueError("MUS event is truncated")
-        value = data[pos:pos + count]
-        pos += count
+        value = data[pos]
+        pos += 1
         return value
 
     while pos < end and not ended:
-        event = take(1)[0]
+        event = take()
         event_type = (event >> 4) & 7
-        if event_type in (0, 2, 3):
-            take(1)
+        if event_type == 0:
+            if take() > 127 and strict:
+                raise ValueError("MUS release-note value is invalid")
         elif event_type == 1:
-            note = take(1)[0]
-            if note & 0x80:
-                take(1)
+            note = take()
+            if note & 0x80 and take() > 127 and strict:
+                raise ValueError("MUS note volume is invalid")
+        elif event_type == 2:
+            take()
+        elif event_type == 3:
+            controller = take()
+            if strict and not 10 <= controller <= 14:
+                raise ValueError("MUS system controller is invalid")
         elif event_type == 4:
-            take(2)
+            controller, value = take(), take()
+            if strict and (controller > 9 or value > 127):
+                raise ValueError("MUS controller event is invalid")
         elif event_type == 6:
             ended = True
         else:
             raise ValueError(f"unsupported MUS event type {event_type}")
         if not ended and event & 0x80:
-            for _ in range(6):
-                value = take(1)[0]
+            for _ in range(5 if strict else 6):
+                value = take()
                 if not value & 0x80:
                     break
             else:
                 raise ValueError("MUS delay value is too long")
     if not ended:
         raise ValueError("MUS score has no end event")
-    return {"scoreLen": score_len, "scoreStart": score_start, "channels": channels}
+    if strict and pos != end:
+        raise ValueError("MUS score has trailing events after its end marker")
+    return {"scoreLen": score_len, "scoreStart": score_start, "channels": channels,
+            "secondary": secondary, "patches": patches}
 
 
 def _patch_object(value, allowed: set[str], label: str) -> dict:
@@ -479,7 +496,7 @@ def apply_rapmod(glbs: GlbSet, mod: dict) -> set[int]:
     Returns the archive numbers touched. No GLB item is mutated if validation
     fails, which lets callers build every output before writing any file.
     """
-    supported = {"format", "version", "requires", "maps", "libs", "flats", "music"}
+    supported = {"format", "version", "requires", "maps", "libs", "flats", "music", "pics"}
     if not isinstance(mod, dict):
         raise ValueError("rapmod must be an object")
     unknown = set(mod) - supported
@@ -487,11 +504,13 @@ def apply_rapmod(glbs: GlbSet, mod: dict) -> set[int]:
         raise ValueError(f"rapmod section {sorted(unknown)[0]} is not supported; the mod may have been made with a newer editor")
     if mod.get("format") != "rapmod":
         raise ValueError("not a rapmod file")
-    if mod.get("version") != 1:
+    if mod.get("version") not in (1, 2):
         version = mod.get("version")
-        if isinstance(version, int) and version > 1:
+        if isinstance(version, int) and version > 2:
             raise ValueError("this mod was made with a newer editor")
         raise ValueError(f"unsupported rapmod version {version}")
+    if mod.get("version") == 1 and "pics" in mod:
+        raise ValueError("rapmod v1 cannot contain embedded artwork")
     requires = mod.get("requires")
     if not isinstance(requires, dict):
         raise ValueError("rapmod requires must be an object")
@@ -511,6 +530,21 @@ def apply_rapmod(glbs: GlbSet, mod: dict) -> set[int]:
             raise ValueError(f"{name} base hash does not match this game data")
         verified[name] = data
         return data
+
+    def require_exact_base(filenum: int, index: int, name: str) -> bytes:
+        ref = f"FILE{filenum:04}.GLB#{index}"
+        if ref not in requires:
+            raise ValueError(f"{ref} patch is missing its base hash")
+        try:
+            item = glbs.files[filenum].items[index]
+        except (KeyError, IndexError) as exc:
+            raise ValueError(f"{ref} does not match the loaded base archives") from exc
+        if item.name != name:
+            raise ValueError(f"{ref} does not match the loaded base archives")
+        actual = "sha256:" + hashlib.sha256(item.data).hexdigest()
+        if not isinstance(requires[ref], str) or actual != requires[ref]:
+            raise ValueError(f"{ref} base hash does not match this game data")
+        return item.data
 
     prepared_libs: dict[int, list[dict]] = {}
     prepared_flats: dict[int, list[dict]] = {}
@@ -582,7 +616,52 @@ def apply_rapmod(glbs: GlbSet, mod: dict) -> set[int]:
         validate_mus(data)
         replacements[name] = data
 
-    if not replacements:
+    replaced_pics: list[tuple[int, int, bytes]] = []
+    appended_pics: list[tuple[int, str, bytes]] = []
+    pics = mod.get("pics", [])
+    if not isinstance(pics, list):
+        raise ValueError("rapmod pics must be an array")
+    existing_names = {item.name for glb in glbs.files.values() for item in glb.items}
+    targets: set[tuple[int, int]] = set()
+    for patch_index, patch in enumerate(pics):
+        patch = _patch_object(patch, {"op", "file", "index", "name", "pic"},
+                              f"PIC patch {patch_index}")
+        name = patch.get("name")
+        if (not isinstance(name, str) or len(name) > 15
+                or any(ord(char) < 0x20 or ord(char) > 0x7e for char in name)
+                or patch.get("op") == "append" and not name):
+            raise ValueError(f"invalid PIC item name {name}")
+        if not isinstance(patch.get("pic"), str):
+            raise ValueError(f"{name} PIC must be base64 text")
+        try:
+            data = base64.b64decode(patch["pic"], validate=True)
+        except (ValueError, base64.binascii.Error) as exc:
+            raise ValueError(f"{name} PIC is not valid base64") from exc
+        validate_pic(data)
+        if patch.get("op") == "replace":
+            filenum = _integer(patch.get("file"), f"{name} archive", 0, 15)
+            index = _integer(patch.get("index"), f"{name} item index", 0, 0xffff)
+            target = (filenum, index)
+            if target in targets:
+                raise ValueError(f"FILE{filenum:04}.GLB#{index} has more than one PIC replacement")
+            base = require_exact_base(filenum, index, name)
+            validate_pic(base)
+            if name in replacements:
+                raise ValueError(f"{name} is already patched by another rapmod section")
+            targets.add(target); replaced_pics.append((filenum, index, data))
+        elif patch.get("op") == "append":
+            if name in existing_names:
+                raise ValueError(f"{name} already exists in the loaded archives")
+            if "index" in patch:
+                raise ValueError(f"{name} append must not specify an item index")
+            filenum = _integer(patch.get("file"), f"{name} target archive", 0, 15)
+            if filenum not in glbs.files:
+                raise ValueError(f"FILE{filenum:04}.GLB is not loaded")
+            existing_names.add(name); appended_pics.append((filenum, name, data))
+        else:
+            raise ValueError(f"{name} PIC operation must be replace or append")
+
+    if not replacements and not replaced_pics and not appended_pics:
         raise ValueError("rapmod contains no changes")
 
     touched: set[int] = set()
@@ -592,6 +671,12 @@ def apply_rapmod(glbs: GlbSet, mod: dict) -> set[int]:
             raise ValueError(f"{name} is not available in the loaded base archives")
         glbs.by_id(item_id).data = data
         touched.add(item_id >> 16)
+    for filenum, index, data in replaced_pics:
+        glbs.files[filenum].items[index].data = data
+        touched.add(filenum)
+    for filenum, name, data in appended_pics:
+        glbs.files[filenum].items.append(GlbItem(0, name, data))
+        touched.add(filenum)
     return touched
 
 
@@ -601,6 +686,36 @@ def apply_rapmod(glbs: GlbSet, mod: dict) -> set[int]:
 
 GTYPE_SPRITE = 0
 GTYPE_PIC = 1
+
+
+def validate_pic(data: bytes) -> dict:
+    if not isinstance(data, bytes) or len(data) < 20:
+        raise ValueError("PIC item is shorter than its header")
+    gtype, _, _, w, h = struct.unpack_from("<5i", data)
+    if gtype not in (GTYPE_SPRITE, GTYPE_PIC):
+        raise ValueError(f"unknown GFX_TYPE {gtype}")
+    if not 1 <= w <= 320 or not 1 <= h <= 200:
+        raise ValueError(f"PIC dimensions {w}x{h} are outside 1x1-320x200")
+    if gtype == GTYPE_PIC:
+        if len(data) != 20 + w * h:
+            raise ValueError("GPIC pixel data size does not match its dimensions")
+        return {"type": gtype, "w": w, "h": h}
+    pos, ended = 20, False
+    while pos + 16 <= len(data):
+        x, y, offset, length = struct.unpack_from("<4i", data, pos)
+        pos += 16
+        if offset == -1 and length == -1:
+            ended = True
+            break
+        if (length < 1 or x < 0 or y < 0 or y >= h or x + length > w
+                or offset != y * 320 + x or pos + length > len(data)):
+            raise ValueError("GSPRITE segment points outside the image or item")
+        pos += length
+    if not ended:
+        raise ValueError("GSPRITE has no terminator")
+    if pos != len(data):
+        raise ValueError("GSPRITE has trailing data after its terminator")
+    return {"type": gtype, "w": w, "h": h}
 
 
 def parse_pic(data: bytes) -> tuple[int, int, bytes, bytes]:
