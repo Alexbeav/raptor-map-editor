@@ -51,6 +51,7 @@
   #tileSelCanvas { width: 64px; height: 64px; image-rendering: pixelated;
     border: 1px solid var(--line); background: #000; }
   .hint { color: var(--dim); font-size: 12px; }
+  .warning { color: #ffd228; }
   #spriteList, #libList { flex: 1; overflow: auto; border: 1px solid var(--line); background: var(--panel2); }
   #spriteList div, #libList div { padding: 3px 8px; cursor: pointer; display: flex; gap: 6px;
     font-family: Consolas, monospace; font-size: 12px; white-space: nowrap; }
@@ -125,6 +126,7 @@
       <button id="tabTiles" class="active">Tiles</button>
       <button id="tabSprites">Sprites</button>
       <button id="tabLib">Library</button>
+      <button id="tabMusic">Music</button>
     </div>
 
     <div class="panel active" id="panelTiles">
@@ -158,7 +160,7 @@
           <option value="5">hard</option><option value="1">secret 1</option>
           <option value="2">secret 2</option><option value="6">secret 3</option>
         </select>
-        link <input type="number" id="propLink"></div>
+        link <input type="number" id="propLink" min="-1" max="1"></div>
         <div class="row">x <input type="number" id="propX" min="0" max="8">
           y <input type="number" id="propY" min="0" max="139" title="rows 140-149 never spawn (scroll starts at 139)">
           <button id="delBtn">Delete</button></div>
@@ -181,6 +183,20 @@
         <div class="hint">drag waypoint &middot; click = add &middot; right-click = delete &middot; &#9733; = spawn point</div>
       </fieldset>
       <div class="hint">changes apply to <b>every</b> placement of the entry, on all maps using this bank</div>
+    </div>
+    <div class="panel" id="panelMusic">
+      <fieldset>
+        <legend>level soundtrack</legend>
+        <div class="row">Track <select id="musicSelect" class="grow"></select></div>
+        <div id="musicInfo" class="hint"></div>
+        <div class="row">
+          <label class="file grow" style="text-align:center">Import custom .MUS
+            <input type="file" id="musicInput" accept=".mus,.MUS">
+          </label>
+          <button id="musicResetBtn">Original</button>
+        </div>
+      </fieldset>
+      <div class="hint">The original engine hard-codes eight soundtrack slots. Levels sharing a slot always share its track. Custom files must use the DMX MUS format, not MIDI/MP3/WAV.</div>
     </div>
   </aside>
   <div id="wrap"><canvas id="map" width="288" height="4800"></canvas></div>
@@ -223,10 +239,16 @@
   is the loop-back target. <b>Duplicate</b> appends a copy as a brand-new enemy &mdash;
   the engine reads the entry count from the data size, so new enemies work even in the
   unmodified original game. Library changes affect every placement of that entry.</p>
+  <h3>Music tab</h3>
+  <p>Choose another built-in track or import a DMX <b>.MUS</b> file for the current
+  level's soundtrack slot. The original engine hard-codes eight shared slots, so
+  every other affected level is shown in yellow. MIDI, MP3, WAV, and Ogg files must
+  be converted to DMX MUS externally before importing.</p>
   <h3>Saving &amp; testing</h3>
   <p><b>Download GLB</b> saves patched copies of every archive you touched.
   Back up your originals, drop the patched files next to any Raptor that reads
-  v1.2 GLBs (DOS, Steam DOS, 2015 Edition, or the open-source port) and play.
+  v1.2 GLBs (DOS, Steam DOS, or the open-source port) and play. The 2015 Edition
+  uses the same original data but remains untested with modified archives.
   JSON export/import matches the companion command-line tools.</p>
   <h3>Shortcuts</h3>
   <p><kbd>Ctrl+Z</kbd> undo (per map / per library bank) &middot; <kbd>Del</kbd> delete
@@ -243,8 +265,8 @@
 "use strict";
 /* ================================================================== CORE ==
    Data layer - formats from the released Raptor source; validated against
-   the shipped GLBs (see ../MAP-EDITOR-FEASIBILITY.md). DOM-free on purpose:
-   tools/test_editor_core.mjs extracts and unit-tests this block.
+   the shipped GLBs (see FORMATS.md). DOM-free on purpose:
+   tests/test_editor_core.mjs extracts and unit-tests this block.
 ============================================================================ */
 const KEY = "32768GLB", SEED = 0x19;
 const MAP_COLS = 9, MAP_ROWS = 150, MAP_SIZE = MAP_COLS * MAP_ROWS;
@@ -276,13 +298,17 @@ function glbEncrypt(u8) {
 
 function parseGlb(buf) {
   const u8 = new Uint8Array(buf);
+  if (u8.length < 28) throw new Error("GLB is shorter than its 28-byte header");
   const hdr = glbDecrypt(u8.subarray(0, 28));
   const count = new DataView(hdr.buffer).getUint32(4, true);
+  const fatSize = 28 * (count + 1);
+  if (count > 0xFFFF || fatSize > u8.length) throw new Error(`invalid GLB item count ${count}`);
   const items = [];
   for (let i = 0; i < count; i++) {
     const e = glbDecrypt(u8.subarray(28 * (i + 1), 28 * (i + 2)));
     const dv = new DataView(e.buffer);
     const flags = dv.getUint32(0, true), offset = dv.getUint32(4, true), size = dv.getUint32(8, true);
+    if (offset < fatSize || offset + size > u8.length) throw new Error(`GLB item ${i} points outside the archive`);
     let name = "";
     for (let j = 12; j < 28 && e[j]; j++) name += String.fromCharCode(e[j]);
     let data = u8.slice(offset, offset + size);
@@ -318,9 +344,11 @@ function buildGlb(glb) {
 }
 
 function parseMap(u8) {
+  if (u8.length < MAZELEVEL_SIZE) throw new Error("MAZELEVEL item is truncated");
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   const sizerec = dv.getUint32(0, true), spriteoff = dv.getUint32(4, true), n = dv.getInt32(8, true);
-  if (sizerec !== u8.length || spriteoff !== MAZELEVEL_SIZE) throw new Error("not a MAZELEVEL item");
+  if (n < 0 || sizerec !== u8.length || spriteoff !== MAZELEVEL_SIZE ||
+      MAZELEVEL_SIZE + n * CSPRITE_SIZE !== u8.length) throw new Error("not a MAZELEVEL item");
   const tiles = [];
   for (let r = 0; r < MAP_ROWS; r++) {
     const row = [];
@@ -342,7 +370,43 @@ function parseMap(u8) {
   return { rows: MAP_ROWS, cols: MAP_COLS, tiles, sprites };
 }
 
+function intField(value, label, min, max) {
+  if (!Number.isInteger(value) || value < min || value > max)
+    throw new Error(`${label} must be an integer from ${min} to ${max}`);
+  return value;
+}
+
+function validateMap(m) {
+  if (!m || !Array.isArray(m.tiles) || m.tiles.length !== MAP_ROWS)
+    throw new Error(`tiles must contain exactly ${MAP_ROWS} rows`);
+  m.tiles.forEach((row, r) => {
+    if (!Array.isArray(row) || row.length !== MAP_COLS)
+      throw new Error(`tile row ${r} must contain exactly ${MAP_COLS} cells`);
+    row.forEach((cell, c) => {
+      if (!cell || typeof cell !== "object") throw new Error(`tile ${r},${c} must be an object`);
+      intField(cell.flats, `tile ${r},${c} flats`, -32768, 32767);
+      intField(cell.fgame, `tile ${r},${c} fgame`, 0, 3);
+    });
+  });
+  if (!Array.isArray(m.sprites)) throw new Error("sprites must be an array");
+  m.sprites.forEach((s, i) => {
+    if (!s || typeof s !== "object") throw new Error(`sprite ${i} must be an object`);
+    intField(s.link, `sprite ${i} link`, -1, 1);
+    intField(s.slib, `sprite ${i} slib`, 0, 0x7FFFFFFF);
+    intField(s.x, `sprite ${i} x`, 0, MAP_COLS - 1);
+    intField(s.y, `sprite ${i} y`, 0, MAP_ROWS - 1);
+    intField(s.game, `sprite ${i} game`, 0, 3);
+    intField(s.level, `sprite ${i} level`, 0, 0xFFFFFFFF);
+  });
+  if (m.sprites.length && ![1, -1].includes(m.sprites.at(-1).link))
+    throw new Error("the final sprite must end its spawn group (link 1 or -1)");
+  for (const group of spawnGroups(m.sprites))
+    if (group[0].y > 139) throw new Error("spawn-group heads must have y <= 139");
+  return m;
+}
+
 function buildMap(m) {
+  validateMap(m);
   const size = MAZELEVEL_SIZE + m.sprites.length * CSPRITE_SIZE;
   const out = new Uint8Array(size), dv = new DataView(out.buffer);
   dv.setUint32(0, size, true); dv.setUint32(4, MAZELEVEL_SIZE, true);
@@ -385,6 +449,16 @@ function normalizeSpawnOrder(sprites) {
   return groups.flat();
 }
 
+function deleteSpritePreservingGroups(sprites, index) {
+  if (!Number.isInteger(index) || index < 0 || index >= sprites.length) return sprites;
+  let start = 0;
+  for (let i = 0; i < index; i++) if (sprites[i].link === 1 || sprites[i].link === -1) start = i + 1;
+  const terminal = sprites[index].link;
+  sprites.splice(index, 1);
+  if ((terminal === 1 || terminal === -1) && index > start) sprites[index - 1].link = terminal;
+  return sprites;
+}
+
 const MAX_SPAWN_ROW = 139;                          // scroll starts at row 139
 
 /* Full 528-byte SPRITE records (MAP.H:95-132). Field names match the Python
@@ -402,6 +476,7 @@ const SPRITE_SHORT_FIELDS = [
 const FLIGHT_NAMES = ["repeat", "linear", "kamikaze", "ground", "ground-left", "ground-right"];
 
 function parseSpriteLib(u8) {
+  if (u8.length % SPRITE_SIZE) throw new Error(`sprite lib size is not a multiple of ${SPRITE_SIZE}`);
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   const out = [];
   for (let base = 0; base + SPRITE_SIZE <= u8.length; base += SPRITE_SIZE) {
@@ -424,16 +499,50 @@ function buildSpriteLib(lib) {
   const dv = new DataView(out.buffer);
   lib.forEach((s, r) => {
     const base = r * SPRITE_SIZE;
+    if (!s || typeof s.iname !== "string" || !/^[\x20-\x7E]{1,15}$/.test(s.iname))
+      throw new Error(`sprite ${r} iname must be 1-15 ASCII characters`);
     for (let j = 0; j < Math.min(s.iname.length, 15); j++) out[base + j] = s.iname.charCodeAt(j);
-    SPRITE_INT_FIELDS.forEach((f, i) => dv.setInt32(base + 16 + i * 4, s[f] | 0, true));
+    SPRITE_INT_FIELDS.forEach((f, i) => {
+      intField(s[f], `sprite ${r} ${f}`, -0x80000000, 0x7FFFFFFF);
+      dv.setInt32(base + 16 + i * 4, s[f], true);
+    });
     let off = base + 120;
-    for (const [f, n] of SPRITE_SHORT_FIELDS)
-      for (let i = 0; i < n; i++) { dv.setInt16(off, (s[f] && s[f][i]) | 0, true); off += 2; }
+    for (const [f, n] of SPRITE_SHORT_FIELDS) {
+      if (!Array.isArray(s[f]) || s[f].length !== n) throw new Error(`sprite ${r} ${f} must contain ${n} values`);
+      for (let i = 0; i < n; i++) { intField(s[f][i], `sprite ${r} ${f}[${i}]`, -32768, 32767); dv.setInt16(off, s[f][i], true); off += 2; }
+    }
   });
   return out;
 }
 
+function validateMus(u8) {
+  if (!(u8 instanceof Uint8Array) || u8.length < 16 || u8[0] !== 0x4D || u8[1] !== 0x55 ||
+      u8[2] !== 0x53 || u8[3] !== 0x1A) throw new Error("not a DMX MUS file (expected MUS\\x1A header)");
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const scoreLen = dv.getUint16(4, true), scoreStart = dv.getUint16(6, true);
+  if (scoreStart < 16 || scoreStart + scoreLen > u8.length) throw new Error("MUS score points outside the file");
+  const end = scoreStart + scoreLen;
+  let pos = scoreStart, ended = false;
+  const take = n => { if (pos + n > end) throw new Error("MUS event is truncated"); pos += n; };
+  while (pos < end && !ended) {
+    const event = u8[pos++], type = (event >> 4) & 7;
+    if (type === 0 || type === 2 || type === 3) take(1);
+    else if (type === 1) { take(1); if (u8[pos - 1] & 0x80) take(1); }
+    else if (type === 4) take(2);
+    else if (type === 6) ended = true;
+    else throw new Error(`unsupported MUS event type ${type}`);
+    if (!ended && event & 0x80) {
+      let bytes = 0, value;
+      do { take(1); value = u8[pos - 1]; } while ((value & 0x80) && ++bytes < 5);
+      if (value & 0x80) throw new Error("MUS delay value is too long");
+    }
+  }
+  if (!ended) throw new Error("MUS score has no end event");
+  return { scoreLen, scoreStart, channels: dv.getUint16(8, true) };
+}
+
 function parseFlats(u8) {
+  if (u8.length % 8) throw new Error("flats table size is not a multiple of 8");
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   const out = [];
   for (let o = 0; o + 8 <= u8.length; o += 8)
@@ -494,6 +603,15 @@ if (typeof document !== "undefined") (function initUI() {
   const tilesetStart = new Map();   // bank -> first tile item id
   const spriteLibs = new Map();     // bank -> parsed lib
   const flatsLibs = new Map();      // bank -> parsed flats
+  const MUSIC_SLOTS = [
+    ["RAP8_MUS", "RAP2_MUS", "RAP4_MUS", "RAP7_MUS", "RAP6_MUS", "RAP2_MUS", "RAP3_MUS", "RAP4_MUS", "RAP6_MUS"],
+    ["RAP3_MUS", "RAP2_MUS", "RAP4_MUS", "RAP8_MUS", "RAP6_MUS", "RAP2_MUS", "RAP8_MUS", "RAP1_MUS", "RAP6_MUS"],
+    ["RAP8_MUS", "RAP4_MUS", "RAP1_MUS", "RAP7_MUS", "RAP6_MUS", "RAP2_MUS", "RAP3_MUS", "RAP4_MUS", "RAP6_MUS"],
+  ];
+  const musicSources = new Map();   // source key -> {label, data}; originals stay immutable
+  const musicAssignments = new Map(); // hard-coded slot name -> source key
+  const dirtyMusicSlots = new Set();
+  let customMusicSerial = 0;
 
   const canvas = $("map"), ctx = canvas.getContext("2d");
 
@@ -506,6 +624,8 @@ if (typeof document !== "undefined") (function initUI() {
     return -1;
   }
   const byId = id => files.get(id >> 16).glb.items[id & 0xFFFF];
+  const esc = value => String(value).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
   function bankData(map, bank) {
     if (!map.has(bank)) {
@@ -548,24 +668,30 @@ if (typeof document !== "undefined") (function initUI() {
   }
 
   // ---- file loading -------------------------------------------------------
-  function dropMsg(html) {                 // feedback on the overlay while it's up
+  function dropMsg(html) {                 // markup is internal; dynamic values must use esc()
     $("dropMsg").innerHTML = html;
     setStatus($("dropMsg").textContent.replace(/\s+/g, " ").trim());
   }
 
   async function loadFiles(fileList) {
     const skipped = [];
+    const incoming = new Map();
     for (const f of fileList) {
       const m = /^FILE(\d{4})\.GLB$/i.exec(f.name);
       if (!m) { skipped.push(f.name); continue; }
       try {
-        files.set(parseInt(m[1], 10), { glb: parseGlb(await f.arrayBuffer()), filename: f.name.toUpperCase() });
-      } catch (e) { dropMsg(`Failed to parse ${f.name}: ${e.message}`); return; }
+        incoming.set(parseInt(m[1], 10), { glb: parseGlb(await f.arrayBuffer()), filename: f.name.toUpperCase() });
+      } catch (e) { dropMsg(`Failed to parse ${esc(f.name)}: ${esc(e.message)}`); return; }
     }
+    const replacing = [...incoming.keys()].some(n => files.has(n));
+    if (replacing && (dirty.size || dirtyLibs.size || dirtyMusicSlots.size) &&
+        !confirm("Loading a replacement archive starts a new session and discards current edits. Continue?")) return;
+    if (replacing) resetSession();
+    for (const [n, f] of incoming) files.set(n, f);
     const loaded = [...files.keys()].sort((a, b) => a - b)
       .map(n => files.get(n).filename).join(", ");
     const skipNote = skipped.length
-      ? `<br><span class="hint">skipped (not FILE000n.GLB): ${skipped.join(", ")}</span>` : "";
+      ? `<br><span class="hint">skipped (not FILE000n.GLB): ${skipped.map(esc).join(", ")}</span>` : "";
     if (!files.size) {
       dropMsg(`No GLB files recognized.${skipNote}<br>
         <span class="hint">Expected names like FILE0000.GLB &ndash; FILE0004.GLB</span>`);
@@ -574,7 +700,7 @@ if (typeof document !== "undefined") (function initUI() {
     picCache.clear(); tilesetStart.clear(); spriteLibs.clear(); flatsLibs.clear();
     const palId = itemId("PALETTE_DAT");
     if (palId < 0) {
-      dropMsg(`Loaded: <b>${loaded}</b> &mdash; keep going!${skipNote}<br>
+      dropMsg(`Loaded: <b>${esc(loaded)}</b> &mdash; keep going!${skipNote}<br>
         <span class="hint">FILE0001.GLB is still needed (it holds the palette and Bravo sector).<br>
         For every level, load FILE0001&ndash;FILE0004. Drop more files or click here.</span>`);
       return;
@@ -591,11 +717,33 @@ if (typeof document !== "undefined") (function initUI() {
     $("mapSelect").innerHTML = mapIndex.map(m => `<option>${m.name}</option>`).join("");
     $("mapSelect").disabled = $("saveBtn").disabled = $("jsonExportBtn").disabled = !mapIndex.length;
     fillBankSelects();
+    initializeMusic();
     $("drop").classList.add("hide");
     const missing = [1, 2, 3, 4].filter(n => !files.has(n));
     setStatus(`${loaded} loaded, ${mapIndex.length} maps` +
       (missing.length ? ` (add FILE000${missing.join("/")}.GLB for the rest)` : ""));
     if (mapIndex.length) openMap(curMap && mapIndex.some(m => m.name === curMap) ? curMap : mapIndex[0].name);
+  }
+
+  function resetSession() {
+    files.clear(); levels.clear(); dirty.clear(); undoStacks.clear();
+    picCache.clear(); tilesetStart.clear(); spriteLibs.clear(); flatsLibs.clear();
+    dirtyLibs.clear(); libUndo.clear(); musicSources.clear(); musicAssignments.clear(); dirtyMusicSlots.clear();
+    mapIndex = []; palette = null; curMap = null; curTile = null; curLibSel = null;
+    selSprite = -1; libSel = -1; placing = dragging = painting = false; customMusicSerial = 0;
+  }
+
+  function initializeMusic() {
+    if (musicSources.size) return;
+    for (let n = 1; n <= 8; n++) {
+      const name = `RAP${n}_MUS`, id = itemId(name);
+      if (id >= 0) {
+        try { validateMus(byId(id).data); }
+        catch { continue; }
+        musicSources.set(name, { label: `Raptor track ${n}`, data: byId(id).data.slice() });
+        musicAssignments.set(name, name);
+      }
+    }
   }
 
   function fillBankSelects() {
@@ -619,7 +767,14 @@ if (typeof document !== "undefined") (function initUI() {
   }
 
   function openMap(name) {
-    if (curMap) commit(curMap);
+    if (curMap && curMap !== name) {
+      try { commit(curMap); }
+      catch (err) {                       // invalid map (e.g. final sprite link 0)
+        setStatus(`fix ${curMap} before leaving it: ${err.message}`);
+        $("mapSelect").value = curMap;
+        return;
+      }
+    }
     curMap = name;
     $("mapSelect").value = name;
     if (!levels.has(name)) {
@@ -635,6 +790,7 @@ if (typeof document !== "undefined") (function initUI() {
     if (top(counts) !== undefined) $("tileBank").value = top(counts);
     if (top(scounts) !== undefined) $("spriteBank").value = top(scounts);
     drawTileGrid(); drawSpriteList(); updateProps();
+    updateMusicPanel();
     redraw();
     $("wrap").scrollTop = $("wrap").scrollHeight;   // level starts at the bottom
     updateSaveBtn(); updateUndoBtn();
@@ -642,10 +798,11 @@ if (typeof document !== "undefined") (function initUI() {
 
   function markDirty() { dirty.add(curMap); updateSaveBtn(); }
 
-  function pushUndo() {
-    if (!undoStacks.has(curMap)) undoStacks.set(curMap, []);
-    const st = undoStacks.get(curMap);
-    st.push(JSON.stringify(level()));
+  function pushUndo(name = curMap) {
+    if (!name || !levels.has(name)) return;
+    if (!undoStacks.has(name)) undoStacks.set(name, []);
+    const st = undoStacks.get(name);
+    st.push(JSON.stringify(levels.get(name)));
     if (st.length > 100) st.shift();
     updateUndoBtn();
   }
@@ -658,13 +815,36 @@ if (typeof document !== "undefined") (function initUI() {
     markDirty(); updateProps(); redraw(); updateUndoBtn();
   }
 
-  const updateUndoBtn = () => $("undoBtn").disabled = !(undoStacks.get(curMap) || []).length;
+  const updateUndoBtn = () => {
+    const available = mode === "library"
+      ? (libUndo.get(+$("libBank").value) || []).length
+      : mode === "music" ? 0 : (undoStacks.get(curMap) || []).length;
+    $("undoBtn").disabled = !available;
+  };
+
+  function validateMapAssets(m) {
+    validateMap(m);
+    m.tiles.forEach((row, r) => row.forEach((cell, c) => {
+      const flats = bankData(flatsLibs, cell.fgame);
+      if (!flats || cell.flats < 0 || cell.flats >= flats.length)
+        throw new Error(`tile ${r},${c} references missing bank/tile G${cell.fgame + 1}:${cell.flats}`);
+    }));
+    m.sprites.forEach((s, i) => {
+      const lib = bankData(spriteLibs, s.game);
+      if (!lib || s.slib >= lib.length) throw new Error(`sprite ${i} references missing bank/entry G${s.game + 1}:${s.slib}`);
+    });
+    return m;
+  }
 
   function affectedFiles() {
     const nums = new Set();
     for (const name of dirty) nums.add(mapIndex.find(m => m.name === name).filenum);
     for (const bank of dirtyLibs) {
       const id = itemId(`SPRITE${bank + 1}_ITM`);
+      if (id >= 0) nums.add(id >> 16);
+    }
+    for (const slot of dirtyMusicSlots) {
+      const id = itemId(slot);
       if (id >= 0) nums.add(id >> 16);
     }
     return [...nums].sort((a, b) => a - b);
@@ -678,7 +858,7 @@ if (typeof document !== "undefined") (function initUI() {
       return;
     }
     $("saveBtn").textContent = `Download ${nums.map(n => files.get(n).filename).join(" + ")}` +
-      ` (${dirty.size + dirtyLibs.size} edited)`;
+      ` (${dirty.size + dirtyLibs.size + dirtyMusicSlots.size} edited)`;
   }
 
   const setStatus = t => $("status").textContent = t;
@@ -819,28 +999,33 @@ if (typeof document !== "undefined") (function initUI() {
     const bank = +$("spriteBank").value;
     const lib = bankData(spriteLibs, bank);
     $("spriteList").innerHTML = lib.map((s, i) =>
-      `<div data-i="${i}"><span style="color:var(--dim)">${String(i).padStart(3)}</span> ` +
-      `${s.iname.replace(/(G\d)?_(PIC|BLK)$/, "")} <span style="color:var(--dim);margin-left:auto">hp ${s.hits}</span></div>`
+      `<div data-i="${i}"${curLibSel && curLibSel.bank === bank && curLibSel.slib === i ? ' class="sel"' : ""}>` +
+      `<span style="color:var(--dim)">${String(i).padStart(3)}</span> ` +
+      `${esc(s.iname.replace(/(G\d)?_(PIC|BLK)$/, ""))} <span style="color:var(--dim);margin-left:auto">hp ${s.hits}</span></div>`
     ).join("");
-    $("placeBtn").disabled = true;
+    $("placeBtn").disabled = !curLibSel;
+  }
+
+  function selectPlacementType(bank, slib) {
+    const entry = bankData(spriteLibs, bank)[slib];
+    if (!entry) return;                   // map data can reference a missing entry
+    curLibSel = { bank, slib };
+    $("spriteBank").value = bank;
+    drawSpriteList();
+    const g = spriteGfx(bank, slib), pc = $("spritePrevCanvas");
+    pc.width = g ? g.width : 32; pc.height = g ? g.height : 32;
+    if (g) pc.getContext("2d").drawImage(g, 0, 0);
+    $("spritePrevInfo").innerHTML =
+      `<b>${esc(entry.iname)}</b><br>hp ${entry.hits} &middot; $${entry.money}` +
+      `<br>${esc(FLIGHT_NAMES[entry.flighttype] || "?")} &middot; ${entry.num_frames} frame(s)` +
+      `<br>${entry.numflight} waypoint(s)`;
   }
 
   $("spriteList").addEventListener("click", e => {
     const div = e.target.closest("div[data-i]");
     if (!div) return;
-    [...$("spriteList").children].forEach(d => d.classList.toggle("sel", d === div));
     const bank = +$("spriteBank").value, slib = +div.dataset.i;
-    curLibSel = { bank, slib };
-    const entry = bankData(spriteLibs, bank)[slib];
-    const g = spriteGfx(bank, slib);
-    const pc = $("spritePrevCanvas");
-    pc.width = g ? g.width : 32; pc.height = g ? g.height : 32;
-    if (g) pc.getContext("2d").drawImage(g, 0, 0);
-    $("spritePrevInfo").innerHTML =
-      `<b>${entry.iname}</b><br>hp ${entry.hits} &middot; $${entry.money}` +
-      `<br>${FLIGHT_NAMES[entry.flighttype] || "?"} &middot; ${entry.num_frames} frame(s)` +
-      `<br>${entry.numflight} waypoint(s)`;
-    $("placeBtn").disabled = false;
+    selectPlacementType(bank, slib);
   });
   $("spriteBank").addEventListener("change", drawSpriteList);
 
@@ -856,7 +1041,7 @@ if (typeof document !== "undefined") (function initUI() {
     if (!s) return;
     const lib = bankData(spriteLibs, s.game);
     $("propSlib").innerHTML = lib.map((l, i) =>
-      `<option value="${i}"${i === s.slib ? " selected" : ""}>${i} ${l.iname}</option>`).join("");
+      `<option value="${i}"${i === s.slib ? " selected" : ""}>${i} ${esc(l.iname)}</option>`).join("");
     $("propLevel").value = LEVEL_NAMES[s.level] ? s.level : 4;
     $("propLink").value = s.link;
     $("propX").value = s.x; $("propY").value = s.y;
@@ -867,9 +1052,16 @@ if (typeof document !== "undefined") (function initUI() {
     if (!s) return;
     pushUndo(); fn(s); markDirty(); redraw();
   }
-  $("propSlib").addEventListener("change", () => propEdit(s => s.slib = +$("propSlib").value));
+  $("propSlib").addEventListener("change", () => {
+    const slib = +$("propSlib").value;
+    propEdit(s => { s.slib = slib; selectPlacementType(s.game, slib); });
+  });
   $("propLevel").addEventListener("change", () => propEdit(s => s.level = +$("propLevel").value));
-  $("propLink").addEventListener("change", () => propEdit(s => s.link = +$("propLink").value));
+  $("propLink").addEventListener("change", () => {
+    const link = +$("propLink").value;
+    if (![-1, 0, 1].includes(link)) { setStatus("link must be -1, 0, or 1"); updateProps(); return; }
+    propEdit(s => s.link = link);
+  });
   $("propX").addEventListener("change", () => propEdit(s => s.x = Math.max(0, Math.min(8, +$("propX").value))));
   $("propY").addEventListener("change", () => propEdit(s => s.y = Math.max(0, Math.min(MAX_SPAWN_ROW, +$("propY").value))));
   $("delBtn").addEventListener("click", deleteSelected);
@@ -877,7 +1069,7 @@ if (typeof document !== "undefined") (function initUI() {
   function deleteSelected() {
     if (selSprite < 0) return;
     pushUndo();
-    level().sprites.splice(selSprite, 1);
+    deleteSpritePreservingGroups(level().sprites, selSprite);
     selSprite = -1;
     markDirty(); updateProps(); redraw();
   }
@@ -923,7 +1115,11 @@ if (typeof document !== "undefined") (function initUI() {
         return;
       }
       selSprite = spriteAt(cell.px, cell.py);
-      if (selSprite >= 0) { dragging = true; pushUndo(); }
+      if (selSprite >= 0) {
+        dragging = true; pushUndo();
+        const selected = level().sprites[selSprite];
+        selectPlacementType(selected.game, selected.slib);
+      }
       updateProps(); redraw();
     }
   });
@@ -956,7 +1152,8 @@ if (typeof document !== "undefined") (function initUI() {
     else if (e.key === "Delete" && mode === "sprites") deleteSelected();
     else if (e.ctrlKey && e.key.toLowerCase() === "z") {
       e.preventDefault();
-      mode === "library" ? popLibUndo() : undo();
+      if (mode === "library") popLibUndo();
+      else if (mode !== "music") undo();  // music edits are not on the undo stacks
     }
   });
 
@@ -980,6 +1177,7 @@ if (typeof document !== "undefined") (function initUI() {
     const st = libUndo.get(bank);
     st.push(JSON.stringify(curLib()));
     if (st.length > 100) st.shift();
+    updateUndoBtn();
   }
 
   function popLibUndo() {
@@ -989,7 +1187,7 @@ if (typeof document !== "undefined") (function initUI() {
     spriteLibs.set(bank, JSON.parse(st.pop()));
     dirtyLibs.add(bank);
     drawLibList(); selectLibEntry(Math.min(libSel, curLib().length - 1));
-    updateSaveBtn(); redraw();
+    updateSaveBtn(); updateUndoBtn(); redraw();
   }
 
   function markLibDirty() {
@@ -1002,7 +1200,7 @@ if (typeof document !== "undefined") (function initUI() {
     $("libList").innerHTML = lib.map((s, i) =>
       `<div data-i="${i}"${i === libSel ? ' class="sel"' : ""}>` +
       `<span style="color:var(--dim)">${String(i).padStart(3)}</span> ` +
-      `${s.iname.replace(/(G\d)?_(PIC|BLK)$/, "")}</div>`).join("");
+      `${esc(s.iname.replace(/(G\d)?_(PIC|BLK)$/, ""))}</div>`).join("");
     $("dupBtn").disabled = libSel < 0;
   }
 
@@ -1175,20 +1373,85 @@ if (typeof document !== "undefined") (function initUI() {
     if (id >= 0) byId(id).data = buildSpriteLib(bankData(spriteLibs, bank));
   }
 
+  // ---- Music: the engine hard-codes one shared RAPn_MUS slot per level -------
+  function musicSlotForMap(name = curMap) {
+    const m = /^MAP([1-9])G([1-3])_MAP$/.exec(name || "");
+    return m ? MUSIC_SLOTS[+m[2] - 1][+m[1] - 1] : null;
+  }
+
+  function mapsForMusicSlot(slot) {
+    const names = [];
+    for (let game = 0; game < MUSIC_SLOTS.length; game++)
+      MUSIC_SLOTS[game].forEach((s, wave) => { if (s === slot) names.push(`MAP${wave + 1}G${game + 1}`); });
+    return names;
+  }
+
+  function applyMusicSource(slot, sourceKey) {
+    const id = itemId(slot), source = musicSources.get(sourceKey);
+    if (id < 0 || !source) throw new Error(`${slot} is not available in the loaded archives`);
+    byId(id).data = source.data.slice();
+    musicAssignments.set(slot, sourceKey);
+    dirtyMusicSlots.add(slot);
+    updateSaveBtn(); updateMusicPanel();
+  }
+
+  function updateMusicPanel() {
+    const slot = musicSlotForMap();
+    const available = slot && itemId(slot) >= 0 && musicSources.size;
+    $("musicSelect").disabled = $("musicInput").disabled = $("musicResetBtn").disabled = !available;
+    if (!available) {
+      $("musicSelect").innerHTML = "";
+      $("musicInfo").textContent = "Load FILE0000.GLB to edit soundtrack slots.";
+      return;
+    }
+    const assigned = musicAssignments.get(slot) || slot;
+    $("musicSelect").innerHTML = [...musicSources].map(([key, source]) =>
+      `<option value="${esc(key)}"${key === assigned ? " selected" : ""}>${esc(source.label)}</option>`).join("");
+    const shared = mapsForMusicSlot(slot);
+    $("musicInfo").innerHTML = `<b>${slot}</b> is hard-coded for ${esc(curMap.replace(/_MAP$/, ""))}. ` +
+      `<span class="warning">Changing it also changes ${esc(shared.filter(n => `${n}_MAP` !== curMap).join(", ") || "no other levels")}.</span>`;
+  }
+
+  $("musicSelect").addEventListener("change", () => {
+    const slot = musicSlotForMap();
+    if (slot) applyMusicSource(slot, $("musicSelect").value);
+  });
+  $("musicResetBtn").addEventListener("click", () => {
+    const slot = musicSlotForMap();
+    if (slot && musicSources.has(slot)) applyMusicSource(slot, slot);
+  });
+  $("musicInput").addEventListener("change", async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const data = new Uint8Array(await f.arrayBuffer());
+      const info = validateMus(data);
+      const key = `custom:${++customMusicSerial}`;
+      musicSources.set(key, { label: `${f.name} (custom)`, data });
+      applyMusicSource(musicSlotForMap(), key);
+      setStatus(`imported ${f.name}: ${info.scoreLen} score bytes, ${info.channels} channel(s)`);
+    } catch (err) { setStatus(`music import failed: ${err.message}`); }
+    e.target.value = "";
+  });
+
   // ---- tabs / header ----------------------------------------------------------
   function switchTab(m) {
     mode = m;
     for (const [tab, panel, key] of [["tabTiles", "panelTiles", "tiles"],
-      ["tabSprites", "panelSprites", "sprites"], ["tabLib", "panelLib", "library"]]) {
+      ["tabSprites", "panelSprites", "sprites"], ["tabLib", "panelLib", "library"],
+      ["tabMusic", "panelMusic", "music"]]) {
       $(tab).classList.toggle("active", m === key);
       $(panel).classList.toggle("active", m === key);
     }
     placing = false; $("placeBtn").textContent = "Place mode";
     if (m === "library") { drawLibList(); if (libSel >= 0) drawPath(); }
+    if (m === "music") updateMusicPanel();
+    updateUndoBtn();
   }
   $("tabTiles").addEventListener("click", () => switchTab("tiles"));
   $("tabSprites").addEventListener("click", () => switchTab("sprites"));
   $("tabLib").addEventListener("click", () => switchTab("library"));
+  $("tabMusic").addEventListener("click", () => switchTab("music"));
 
   $("mapSelect").addEventListener("change", () => openMap($("mapSelect").value));
   $("zoomSelect").addEventListener("change", () => { zoom = +$("zoomSelect").value; redraw(); });
@@ -1232,13 +1495,17 @@ if (typeof document !== "undefined") (function initUI() {
   }
 
   $("saveBtn").addEventListener("click", () => {
-    for (const name of dirty) commit(name);
-    for (const bank of dirtyLibs) commitLib(bank);
-    let nums = affectedFiles();
-    if (!nums.length) nums = [mapIndex.find(m => m.name === curMap).filenum];
-    nums.forEach((n, i) => setTimeout(() =>
-      download(buildGlb(files.get(n).glb), files.get(n).filename), i * 400));
-    setStatus(`saved ${nums.map(n => files.get(n).filename).join(", ")} - back up originals before overwriting!`);
+    try {
+      for (const name of dirty) commit(name);
+      for (const bank of dirtyLibs) commitLib(bank);
+      let nums = affectedFiles();
+      if (!nums.length) nums = [mapIndex.find(m => m.name === curMap).filenum];
+      nums.forEach((n, i) => setTimeout(() =>
+        download(buildGlb(files.get(n).glb), files.get(n).filename), i * 400));
+      dirty.clear(); dirtyLibs.clear(); dirtyMusicSlots.clear();
+      updateSaveBtn();
+      setStatus(`saved ${nums.map(n => files.get(n).filename).join(", ")} - back up originals before overwriting!`);
+    } catch (err) { setStatus(`save failed: ${err.message}`); }
   });
 
   $("jsonExportBtn").addEventListener("click", () => {
@@ -1256,10 +1523,16 @@ if (typeof document !== "undefined") (function initUI() {
     if (!f) return;
     try {
       const m = JSON.parse(await f.text());
-      if (!m.tiles || !m.sprites) throw new Error("missing tiles/sprites");
       const target = (m.name && mapIndex.some(x => x.name === m.name)) ? m.name : curMap;
-      pushUndo();
-      levels.set(target, { rows: MAP_ROWS, cols: MAP_COLS, tiles: m.tiles, sprites: m.sprites.map(({ level_name, ...s }) => s) });
+      const imported = { rows: MAP_ROWS, cols: MAP_COLS, tiles: m.tiles,
+        sprites: Array.isArray(m.sprites) ? m.sprites.map(({ level_name, ...s }) => s) : m.sprites };
+      validateMapAssets(imported);
+      if (!levels.has(target)) {
+        const entry = mapIndex.find(x => x.name === target);
+        levels.set(target, parseMap(files.get(entry.filenum).glb.items[entry.idx].data));
+      }
+      pushUndo(target);
+      levels.set(target, imported);
       dirty.add(target);
       openMap(target);
       setStatus(`imported ${f.name} into ${target}`);
@@ -1281,7 +1554,7 @@ if (typeof document !== "undefined") (function initUI() {
     e.preventDefault();
     if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
   });
-  window.addEventListener("beforeunload", e => { if (dirty.size || dirtyLibs.size) e.preventDefault(); });
+  window.addEventListener("beforeunload", e => { if (dirty.size || dirtyLibs.size || dirtyMusicSlots.size) e.preventDefault(); });
 
 })();
 </script>

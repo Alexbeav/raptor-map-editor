@@ -1,6 +1,6 @@
-// Smoke test for the CORE data layer inside editor.html, run against the real
-// game files:  node test_editor_core.mjs ["..\\glb files"]
-import { readFileSync } from "node:fs";
+// Fixture-independent CORE tests plus optional real-data integration checks:
+// node tests/test_editor_core.mjs ["..\\glb files"]
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,17 +10,56 @@ const dataDir = process.argv[2] ?? join(here, "..", "glbs");
 
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
 const core = html.match(/\/\* =+ CORE ==[\s\S]*?\*\/([\s\S]*?)\/\* =+ END CORE/);
-if (!core) throw new Error("CORE block not found in editor.html");
+if (!core) throw new Error("CORE block not found in index.html");
 const exports_ = {};
 new Function("exports", core[1] +
-  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats, decodePic, spawnGroups, normalizeSpawnOrder});"
+  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, validateMus});"
 )(exports_);
 const { parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats,
-  decodePic, spawnGroups, normalizeSpawnOrder } = exports_;
+  decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, validateMus } = exports_;
 
 let failures = 0;
 const check = (label, ok) => { console.log(`${ok ? "PASS" : "FAIL"}  ${label}`); if (!ok) failures++; };
 const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+// Always-runnable synthetic checks.
+const plain = Uint8Array.from({ length: 257 }, (_, i) => (i * 73) & 255);
+check("cipher encrypt/decrypt", eq(exports_.glbDecrypt(exports_.glbEncrypt(plain)), plain));
+const syntheticGlb = { items: [
+  { flags: 0, name: "PLAIN", data: new Uint8Array([1, 2, 3]) },
+  { flags: 1, name: "SECRET", data: plain },
+] };
+const syntheticBytes = buildGlb(syntheticGlb);
+check("synthetic GLB round trip", eq(buildGlb(parseGlb(syntheticBytes.buffer)), syntheticBytes));
+
+const emptyTiles = Array.from({ length: 150 }, () =>
+  Array.from({ length: 9 }, () => ({ flats: 0, fgame: 0 })));
+const syntheticMap = { tiles: emptyTiles, sprites: [
+  { link: 0, slib: 0, x: 0, y: 100, game: 0, level: 4 },
+  { link: 1, slib: 0, x: 1, y: 100, game: 0, level: 4 },
+  { link: 1, slib: 0, x: 2, y: 90, game: 0, level: 4 },
+] };
+check("synthetic map round trip", eq(buildMap(parseMap(buildMap(syntheticMap))), buildMap(syntheticMap)));
+deleteSpritePreservingGroups(syntheticMap.sprites, 1);
+check("deleting a group terminator repairs the preceding link", syntheticMap.sprites[0].link === 1);
+for (const [label, tiles] of [["149 rows", emptyTiles.slice(0, 149)], ["151 rows", [...emptyTiles, emptyTiles[0]]]]) {
+  let rejected = false;
+  try { buildMap({ tiles, sprites: [] }); } catch { rejected = true; }
+  check(`invalid map rejected: ${label}`, rejected);
+}
+const mus = new Uint8Array(17);
+mus.set([0x4D, 0x55, 0x53, 0x1A]);
+new DataView(mus.buffer).setUint16(4, 1, true);
+new DataView(mus.buffer).setUint16(6, 16, true);
+mus[16] = 0x60;
+check("DMX MUS header validation", validateMus(mus).scoreLen === 1);
+
+const required = Array.from({ length: 5 }, (_, n) => join(dataDir, `FILE000${n}.GLB`));
+if (!required.every(existsSync)) {
+  console.log("\nSKIP  real-data integration checks (pass a directory containing FILE0000.GLB-FILE0004.GLB)");
+  console.log(failures ? `\n${failures} FAILURE(S)` : "\nall fixture-independent tests passed");
+  process.exit(failures ? 1 : 0);
+}
 
 // GLB round trip on every archive
 for (let n = 0; n <= 4; n++) {

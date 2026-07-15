@@ -13,7 +13,11 @@ never modified (saving downloads patched copies).
 
 - **Edit all 27 levels** — paint tiles (with destructible-tile markers and a
   right-click eyedropper), place/move/delete enemies, set per-enemy difficulty
-  (easy / medium / hard / secret), full-level view.
+  (easy / medium / hard / secret), full-level view. Selecting a placed enemy
+  also makes that type the active choice for repeated placement.
+- **Change soundtrack slots** — choose another built-in track or import a DMX
+  `.MUS` file. The original engine hard-codes eight shared slots, so the editor
+  shows every other level affected before a slot is changed.
 - **Edit the enemies themselves** — every enemy definition in the game: hit
   points, bounty, speed, fire rate, flight AI type, and the **flight path** on
   a visual waypoint canvas (drag, click to add, right-click to delete).
@@ -47,24 +51,36 @@ supported.
 
 ## Command-line tools
 
-`tools/` contains the same functionality as scriptable Python (3.10+,
-Pillow for the graphics commands):
+`tools/` contains companion format functionality as scriptable Python (3.10+;
+`pip install -r requirements.txt` installs Pillow for the graphics commands):
 
 ```
-python glbtool.py list      <FILE000n.GLB>          # inspect archives
-python glbtool.py verify    <FILE000n.GLB>          # prove lossless round trip
-python glbtool.py map2json  <datadir> MAP1G1        # level  <-> editable JSON
-python glbtool.py json2map  <datadir> map1g1.json
-python glbtool.py lib2json  <datadir> 1             # enemies <-> editable JSON
-python glbtool.py json2lib  <datadir> lib.json
-python glbtool.py pic2png   <datadir> SHIP01G1_PIC  # any graphic -> PNG
-python glbtool.py png2pic   <datadir> art.png --name MYSHIP_PIC   # PNG -> game
-python render_map.py <datadir> --all                # render all 27 levels to PNG
+python tools/glbtool.py list      <FILE000n.GLB>          # inspect archives
+python tools/glbtool.py verify    <FILE000n.GLB>          # prove lossless round trip
+python tools/glbtool.py map2json  <datadir> MAP1G1        # level  <-> editable JSON
+python tools/glbtool.py json2map  <datadir> map1g1.json
+python tools/glbtool.py lib2json  <datadir> 1             # enemies <-> editable JSON
+python tools/glbtool.py json2lib  <datadir> lib.json
+python tools/glbtool.py pic2png   <datadir> SHIP01G1_PIC  # any graphic -> PNG
+python tools/glbtool.py png2pic   <datadir> art.png --name MYSHIP_PIC   # PNG -> game
+python tools/render_map.py <datadir> --all                # render all 27 levels to PNG
 ```
 
 `png2pic` quantizes to the game palette and encodes either graphic format;
 the encoder reproduces the original tool's output byte-for-byte on
 re-encoded sprites.
+
+## Tests
+
+Fixture-independent codec and validation tests run without game data:
+
+```
+node tests/test_editor_core.mjs
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+Pass a GLB directory to the Node test to additionally run the proprietary-data
+round-trip checks: `node tests/test_editor_core.mjs <datadir>`.
 
 ## Legality
 

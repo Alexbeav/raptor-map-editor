@@ -106,6 +106,8 @@ def cmd_json2lib(args):
     game, lib = j["game"], j["entries"]
     glbs = GlbSet(args.datadir)
     item_id = glbs.item_id(f"SPRITE{game}_ITM")
+    if item_id < 0:
+        sys.exit(f"SPRITE{game}_ITM not found in {args.datadir}")
     filenum = item_id >> 16
     glb = glbs.files[filenum]
     glb.items[item_id & 0xFFFF].data = build_sprite_lib(lib)

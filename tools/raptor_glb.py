@@ -2,8 +2,8 @@
 raptor_glb.py - Library for Raptor: Call of the Shadows data files.
 
 Formats implemented from the released game source (original-dos/SOURCE) and the
-skynettx/nukeykt port (modern-port/src/glbapi.cpp). See MAP-EDITOR-FEASIBILITY.md
-at the repo root for the validated format documentation.
+skynettx/nukeykt port (modern-port/src/glbapi.cpp). See FORMATS.md at the repo
+root for the validated format documentation.
 
 Covers:
   * GLB container: FAT parse/build, item en/decryption (key "32768GLB", seed 0x19)
@@ -88,12 +88,19 @@ class GlbFile:
 
     @classmethod
     def parse(cls, data: bytes) -> "GlbFile":
+        if len(data) < FAT_ENTRY:
+            raise ValueError("GLB is shorter than its 28-byte header")
         hdr = decrypt(data[:FAT_ENTRY])
         _, count, _ = struct.unpack_from("<III", hdr)
+        fat_size = FAT_ENTRY * (count + 1)
+        if count > 0xFFFF or fat_size > len(data):
+            raise ValueError(f"invalid GLB item count {count}")
         items = []
         for i in range(count):
             e = decrypt(data[FAT_ENTRY * (i + 1): FAT_ENTRY * (i + 2)])
             flags, offset, size = struct.unpack_from("<III", e)
+            if offset < fat_size or offset + size > len(data):
+                raise ValueError(f"GLB item {i} points outside the archive")
             name = e[12:28].split(b"\0")[0].decode("ascii", "replace")
             raw = data[offset: offset + size]
             if flags & FLAG_ENCODED:
@@ -162,8 +169,13 @@ class GlbSet:
 # --------------------------------------------------------------------------
 
 def parse_map(data: bytes) -> dict:
-    sizerec, spriteoff, numsprites = struct.unpack_from("<III", data)
-    if sizerec != len(data) or spriteoff != MAZELEVEL_SIZE:
+    if len(data) < MAZELEVEL_SIZE:
+        raise ValueError("MAZELEVEL item is truncated")
+    sizerec, spriteoff, numsprites = struct.unpack_from("<IIi", data)
+    if numsprites < 0:
+        raise ValueError("MAZELEVEL has a negative sprite count")
+    expected = MAZELEVEL_SIZE + numsprites * CSPRITE_SIZE
+    if sizerec != len(data) or spriteoff != MAZELEVEL_SIZE or expected != len(data):
         raise ValueError(f"not a MAZELEVEL item (sizerec={sizerec}, spriteoff={spriteoff})")
     cells = struct.unpack_from(f"<{MAP_SIZE * 2}h", data, 12)
     tiles = [
@@ -183,7 +195,47 @@ def parse_map(data: bytes) -> dict:
     return {"rows": MAP_ROWS, "cols": MAP_COLS, "tiles": tiles, "sprites": sprites}
 
 
+def _integer(value, label: str, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ValueError(f"{label} must be an integer from {low} to {high}")
+    return value
+
+
+def validate_map(m: dict) -> dict:
+    """Validate editable JSON before it can become a game record."""
+    tiles = m.get("tiles")
+    sprites = m.get("sprites")
+    if not isinstance(tiles, list) or len(tiles) != MAP_ROWS:
+        raise ValueError(f"tiles must contain exactly {MAP_ROWS} rows")
+    for r, row in enumerate(tiles):
+        if not isinstance(row, list) or len(row) != MAP_COLS:
+            raise ValueError(f"tile row {r} must contain exactly {MAP_COLS} cells")
+        for c, cell in enumerate(row):
+            if not isinstance(cell, dict):
+                raise ValueError(f"tile {r},{c} must be an object")
+            _integer(cell.get("flats"), f"tile {r},{c} flats", -32768, 32767)
+            _integer(cell.get("fgame"), f"tile {r},{c} fgame", 0, 3)
+    if not isinstance(sprites, list):
+        raise ValueError("sprites must be an array")
+    for i, s in enumerate(sprites):
+        if not isinstance(s, dict):
+            raise ValueError(f"sprite {i} must be an object")
+        _integer(s.get("link"), f"sprite {i} link", -1, 1)
+        _integer(s.get("slib"), f"sprite {i} slib", 0, 0x7FFFFFFF)
+        _integer(s.get("x"), f"sprite {i} x", 0, MAP_COLS - 1)
+        _integer(s.get("y"), f"sprite {i} y", 0, MAP_ROWS - 1)
+        _integer(s.get("game"), f"sprite {i} game", 0, 3)
+        _integer(s.get("level"), f"sprite {i} level", 0, 0xFFFFFFFF)
+    if sprites and sprites[-1]["link"] not in (1, -1):
+        raise ValueError("the final sprite must end its spawn group (link 1 or -1)")
+    for group in spawn_groups(sprites):
+        if group[0]["y"] > 139:
+            raise ValueError("spawn-group heads must have y <= 139")
+    return m
+
+
 def build_map(m: dict) -> bytes:
+    validate_map(m)
     sprites = m["sprites"]
     size = MAZELEVEL_SIZE + len(sprites) * CSPRITE_SIZE
     out = bytearray(struct.pack("<III", size, MAZELEVEL_SIZE, len(sprites)))
@@ -258,11 +310,25 @@ def build_sprite_lib(lib: list[dict]) -> bytes:
     out = bytearray(len(lib) * SPRITE_SIZE)
     for r, s in enumerate(lib):
         base = r * SPRITE_SIZE
-        name = s["iname"].encode("ascii")[:15]
+        try:
+            name = s["iname"].encode("ascii")
+        except (AttributeError, UnicodeEncodeError) as exc:
+            raise ValueError(f"sprite {r} iname must be ASCII") from exc
+        if not name or len(name) > 15:
+            raise ValueError(f"sprite {r} iname must be 1-15 ASCII characters")
         out[base: base + len(name)] = name
-        struct.pack_into("<26i", out, base + 16, *(s[f] for f in _SPRITE_INTS))
+        ints = [_integer(s.get(f), f"sprite {r} {f}", -0x80000000, 0x7FFFFFFF)
+                for f in _SPRITE_INTS]
+        struct.pack_into("<26i", out, base + 16, *ints)
+        for field in ("shoot_type", "engx", "engy", "englx", "shootx", "shooty"):
+            if not isinstance(s.get(field), list) or len(s[field]) != MAX_GUNS:
+                raise ValueError(f"sprite {r} {field} must contain {MAX_GUNS} values")
+        for field in ("flightx", "flighty"):
+            if not isinstance(s.get(field), list) or len(s[field]) != MAX_FLIGHT:
+                raise ValueError(f"sprite {r} {field} must contain {MAX_FLIGHT} values")
         shorts = (s["shoot_type"] + s["engx"] + s["engy"] + s["englx"]
                   + s["shootx"] + s["shooty"] + s["flightx"] + s["flighty"])
+        shorts = [_integer(v, f"sprite {r} short value", -32768, 32767) for v in shorts]
         struct.pack_into(f"<{len(shorts)}h", out, base + 120, *shorts)
     return bytes(out)
 

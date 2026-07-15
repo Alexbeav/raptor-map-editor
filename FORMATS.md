@@ -135,3 +135,17 @@ Menus/windows (`*_SWD`, interpreted by `SWDAPI`), music (`*_MUS`), fonts
 (`*_FNT`: `{ i32 height; i16 charofs[256]; i8 width[256]; }` + glyphs),
 digital SFX, encrypted text, and pilot photos (`PILOT_AGX` — a distinct
 animation format, not yet documented here).
+
+### Level music
+
+The map record contains no soundtrack field. The original engine selects one
+of eight `RAP1_MUS`–`RAP8_MUS` item IDs through three hard-coded nine-entry
+tables (`songsg1`, `songsg2`, `songsg3` in `windows.cpp`). Several levels share
+each slot. A GLB-only editor can replace a slot's data, but cannot give every
+level an independent item ID without patching the executable.
+
+Music items use the DMX MUS event format: magic `MUS\x1a`, followed by
+little-endian `u16` score length, score offset, primary-channel count,
+secondary-channel count, instrument count, and an instrument list before the
+event stream. Standard MIDI, MP3, WAV, and Ogg files are not interchangeable
+with this format and must be converted externally first.
