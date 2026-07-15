@@ -143,7 +143,8 @@
 
     <div class="panel" id="panelSprites">
       <div class="row">Bank <select id="spriteBank"></select>
-        <button id="placeBtn" disabled>Place mode</button></div>
+        <button id="placeBtn" disabled>Place mode</button>
+        <button id="clearSpritesBtn" title="remove every sprite from this map (tiles untouched)">Clear all</button></div>
       <div id="spriteList"></div>
       <div id="spritePrev">
         <canvas id="spritePrevCanvas" width="32" height="32"></canvas>
@@ -213,7 +214,8 @@
   to stamp new ones. Difficulty boxes: <span style="color:#3cdc3c">easy</span> &middot;
   <span style="color:#ffd228">medium</span> &middot; <span style="color:#ff3c3c">hard</span>
   &middot; <span style="color:#3cdcdc">secret</span>. Rows 140&ndash;149 never spawn
-  (the engine's scroll trigger starts at row 139), so placement is capped there.</p>
+  (the engine's scroll trigger starts at row 139), so placement is capped there.
+  <b>Clear all</b> removes every sprite from the map without touching the tiles.</p>
   <h3>Library tab</h3>
   <p>Edits the enemy definitions themselves &mdash; hit points, bounty, speed, fire rate,
   flight type &mdash; and the flight path on a canvas: drag waypoints, click to add,
@@ -1208,6 +1210,16 @@ if (typeof document !== "undefined") (function initUI() {
   $("blankBtn").addEventListener("click", () => {
     if (level() && confirm("Blank this map?\n\nFills every tile with the selected tile and removes ALL sprites. Undo with Ctrl+Z."))
       fillMap(true);
+  });
+  $("clearSpritesBtn").addEventListener("click", () => {
+    const lv = level();
+    if (!lv) return;
+    if (!lv.sprites.length) { setStatus("no sprites on this map"); return; }
+    if (!confirm("Clear all sprites?\n\nRemoves every sprite from this map; tiles are untouched. Undo with Ctrl+Z.")) return;
+    pushUndo();
+    lv.sprites = []; selSprite = -1; updateProps();
+    markDirty(); redraw();
+    setStatus(`cleared all sprites on ${curMap}`);
   });
   $("undoBtn").addEventListener("click", undo);
 
