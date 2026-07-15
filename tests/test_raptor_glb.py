@@ -5,7 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 
 from raptor_glb import (  # noqa: E402
-    GlbFile, GlbItem, build_map, decrypt, encrypt, parse_map,
+    GlbFile, GlbItem, build_flats, build_map, decrypt, encrypt, parse_flats,
+    parse_map,
 )
 
 
@@ -44,6 +45,15 @@ class CodecTests(unittest.TestCase):
         source["sprites"] = [{"link": 1, "slib": 0, "x": 0, "y": 140, "game": 0, "level": 4}]
         with self.assertRaises(ValueError):
             build_map(source)
+
+    def test_flats_round_trip_and_validation(self):
+        flats = [
+            {"linkflat": 0, "bonus": 0, "bounty": 0},
+            {"linkflat": 0, "bonus": 25, "bounty": 150},
+        ]
+        self.assertEqual(parse_flats(build_flats(flats)), flats)
+        with self.assertRaises(ValueError):
+            build_flats([{**flats[0], "bonus": 32768}])
 
 
 if __name__ == "__main__":

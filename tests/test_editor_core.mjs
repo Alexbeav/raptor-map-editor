@@ -13,10 +13,10 @@ const core = html.match(/\/\* =+ CORE ==[\s\S]*?\*\/([\s\S]*?)\/\* =+ END CORE/)
 if (!core) throw new Error("CORE block not found in index.html");
 const exports_ = {};
 new Function("exports", core[1] +
-  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, validateMus});"
+  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, validateMus});"
 )(exports_);
-const { parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats,
-  decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, validateMus } = exports_;
+const { parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats,
+  decodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, validateMus } = exports_;
 
 let failures = 0;
 const check = (label, ok) => { console.log(`${ok ? "PASS" : "FAIL"}  ${label}`); if (!ok) failures++; };
@@ -53,6 +53,27 @@ new DataView(mus.buffer).setUint16(4, 1, true);
 new DataView(mus.buffer).setUint16(6, 16, true);
 mus[16] = 0x60;
 check("DMX MUS header validation", validateMus(mus).scoreLen === 1);
+const syntheticFlats = [
+  { linkflat: 0, bonus: 0, bounty: 0 },
+  { linkflat: 0, bonus: 25, bounty: 150 },
+];
+check("synthetic FLATS round trip", JSON.stringify(parseFlats(buildFlats(syntheticFlats))) === JSON.stringify(syntheticFlats));
+let badFlatsRejected = false;
+try { buildFlats([{ ...syntheticFlats[0], bounty: 32768 }]); } catch { badFlatsRejected = true; }
+check("invalid FLATS rejected", badFlatsRejected);
+
+const warningMap = { tiles: emptyTiles, sprites: [
+  { link: 1, slib: 2, x: 0, y: 100, game: 0, level: 0 },
+  { link: 1, slib: 0, x: 1, y: 110, game: 0, level: 4 },
+] };
+const warnings = collectMapWarnings(warningMap, {
+  spriteLibs: new Map([[0, [{}]]]), flatsLibs: new Map([[0, [{ linkflat: 0, bonus: 0, bounty: 0 }]]]),
+});
+check("map warnings identify unused difficulty", warnings.filter(w => w.code === "unused-level").length === 1);
+check("map warnings identify spawn cursor stall", warnings.filter(w => w.code === "spawn-order").length === 1);
+check("map warnings identify missing sprite entry", warnings.filter(w => w.code === "missing-sprite").length === 1);
+check("map warnings omit valid tile references", warnings.every(w => w.code !== "missing-tile"));
+check("empty map warning", collectMapWarnings({ tiles: emptyTiles, sprites: [] }).some(w => w.code === "empty-map"));
 
 const required = Array.from({ length: 5 }, (_, n) => join(dataDir, `FILE000${n}.GLB`));
 if (!required.every(existsSync)) {
@@ -120,6 +141,7 @@ check("duplicated entry appends one 528-byte record",
   parseSpriteLib(grown)[lib.length].iname === lib[13].iname);
 const flats = parseFlats(byName("FLATSG1_ITM").data);
 check("FLATSG1_ITM: 672 entries", flats.length === 672);
+check("FLATSG1_ITM: full codec round trip", eq(buildFlats(flats), byName("FLATSG1_ITM").data));
 
 // graphics decode (palette + GPIC tile + GSPRITE enemy)
 const pal = [];

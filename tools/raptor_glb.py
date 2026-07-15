@@ -342,6 +342,24 @@ def parse_flats(data: bytes) -> list[dict]:
     ]
 
 
+def build_flats(flats: list[dict]) -> bytes:
+    """Inverse of parse_flats with strict field and integer validation."""
+    if not isinstance(flats, list):
+        raise ValueError("flats table must be a list")
+    out = bytearray(len(flats) * FLATS_SIZE)
+    for i, flat in enumerate(flats):
+        if not isinstance(flat, dict):
+            raise ValueError(f"flat {i} must be an object")
+        try:
+            linkflat = _integer(flat["linkflat"], f"flat {i} linkflat", -0x80000000, 0x7FFFFFFF)
+            bonus = _integer(flat["bonus"], f"flat {i} bonus", -32768, 32767)
+            bounty = _integer(flat["bounty"], f"flat {i} bounty", -32768, 32767)
+        except KeyError as exc:
+            raise ValueError(f"flat {i} is missing {exc.args[0]}") from exc
+        struct.pack_into("<ihh", out, i * FLATS_SIZE, linkflat, bonus, bounty)
+    return bytes(out)
+
+
 # --------------------------------------------------------------------------
 # Graphics (GFX_PIC header + GPIC raw / GSPRITE segments, gfxapi.h/.cpp)
 # --------------------------------------------------------------------------

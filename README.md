@@ -12,11 +12,21 @@ never modified (saving downloads patched copies).
 ## What it does
 
 - **Edit all 27 levels** — paint tiles (with destructible-tile markers and a
-  right-click eyedropper), place/move/delete enemies, set per-enemy difficulty
-  (easy / medium / hard / secret), full-level view. Selecting a placed enemy
-  also makes that type the active choice for repeated placement.
+  right-click eyedropper), edit destructible-tile break targets/HP/bounties,
+  place/move/delete enemies, set per-enemy difficulty (easy / medium / hard /
+  secret), full-level view. Selecting a placed enemy also makes that type the
+  active choice for repeated placement.
+- **Catch level mistakes early** — a collapsible warnings strip identifies
+  unused difficulty values, stalled spawn groups, empty maps, and missing tile
+  or sprite-library references; click a warning to jump to it.
+- **Undo and redo safely** — separate 100-step histories for each map and
+  enemy-library bank, with buttons plus Ctrl+Z, Ctrl+Y, and Ctrl+Shift+Z.
+- **Find enemy variants quickly** — optionally group placement and library
+  entries by their shared graphic without changing their engine-facing indices.
 - **Change soundtrack slots** — choose another built-in track or import a DMX
-  `.MUS` file. The original engine hard-codes eight shared slots, so the editor
+  `.MUS` file (convert MIDI files with
+  [midi3mus](https://github.com/skynettx/midi3mus/releases) first).
+  The original engine hard-codes eight shared slots, so the editor
   shows every other level affected before a slot is changed.
 - **Edit the enemies themselves** — every enemy definition in the game: hit
   points, bounty, speed, fire rate, flight AI type, and the **flight path** on
@@ -79,6 +89,14 @@ node tests/test_editor_core.mjs
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
+The synthetic browser smoke test also uses no game data:
+
+```
+npm ci
+npx playwright install chromium
+npm run test:browser
+```
+
 Pass a GLB directory to the Node test to additionally run the proprietary-data
 round-trip checks: `node tests/test_editor_core.mjs <datadir>`.
 
@@ -91,7 +109,11 @@ own GLB files from a copy of the game you own
 The file formats were reverse-engineered from the released DOS source code
 and the GPL-2 [skynettx/raptor](https://github.com/skynettx/raptor) port,
 then validated against the shipped data. Don't redistribute game files or
-archives containing them; share your levels as JSON exports instead.
+archives containing them. The current JSON export contains complete map data
+and is intended for personal backup and tooling, not as a copyright-safe mod
+distribution format. A future base-hashed `.rapmod` patch format is planned in
+[ROADMAP.md](ROADMAP.md) for sharing author-created changes without bundling
+unchanged base-game records.
 
 ## Credits
 

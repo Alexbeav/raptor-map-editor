@@ -17,3 +17,15 @@ jobs:
           python-version: "3.10"
       - run: node tests/test_editor_core.mjs
       - run: python -m unittest discover -s tests -p "test_*.py"
+
+  playwright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser

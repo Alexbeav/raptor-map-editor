@@ -29,6 +29,13 @@
   input[type="file"] { display: none; }
   input[type="number"] { width: 62px; cursor: text; }
   #status { margin-left: auto; color: var(--dim); }
+  #warnings { background: #29251a; border-bottom: 1px solid #59491f; }
+  #warnings.hide { display: none; }
+  #warnings summary { color: #ffd228; cursor: pointer; padding: 5px 12px; }
+  #warningList { max-height: 140px; overflow: auto; padding: 0 12px 6px; }
+  #warningList button { display: block; width: 100%; border: 0; padding: 3px 6px;
+    background: transparent; text-align: left; color: var(--text); }
+  #warningList button:hover { background: #3a3320; }
   #main { flex: 1; display: flex; min-height: 0; }
   aside {
     width: 292px; background: var(--panel); border-right: 1px solid var(--line);
@@ -57,6 +64,11 @@
     font-family: Consolas, monospace; font-size: 12px; white-space: nowrap; }
   #spriteList div:hover, #libList div:hover { background: #2e3542; }
   #spriteList div.sel, #libList div.sel { background: #31435f; }
+  #spriteList div.groupHead, #libList div.groupHead {
+    cursor: default; color: var(--accent); background: #191c22; border-bottom: 1px solid var(--line);
+    font-family: "Segoe UI", system-ui, sans-serif; font-weight: 600;
+  }
+  #spriteList div.groupHead:hover, #libList div.groupHead:hover { background: #191c22; }
   #libList { flex: 0 0 140px; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
   .grid2 label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--dim); }
@@ -113,12 +125,17 @@
   <label><input type="checkbox" id="labelsChk" checked> labels</label>
   <label><input type="checkbox" id="spritesChk" checked> sprites</label>
   <button id="undoBtn" disabled>Undo</button>
+  <button id="redoBtn" disabled>Redo</button>
   <button id="jsonExportBtn" disabled>Export JSON</button>
   <label class="file">Import JSON<input type="file" id="jsonInput" accept=".json"></label>
   <button id="saveBtn" disabled>Download GLB</button>
   <button id="helpBtn" title="help / about">?</button>
   <span id="status">no files loaded</span>
 </header>
+<details id="warnings" class="hide">
+  <summary id="warningSummary"></summary>
+  <div id="warningList"></div>
+</details>
 
 <div id="main">
   <aside>
@@ -136,6 +153,14 @@
         <canvas id="tileSelCanvas" width="32" height="32"></canvas>
         <div id="tileSelInfo" class="hint">no tile selected</div>
       </div>
+      <fieldset id="flatsForm" style="display:none">
+        <legend>destructible tile</legend>
+        <div class="grid2">
+          <label>break target <input type="number" id="flatLink" min="0"></label>
+          <label>hit points <input type="number" id="flatBonus" min="-32768" max="32767"></label>
+          <label>bounty <input type="number" id="flatBounty" min="-32768" max="32767"></label>
+        </div>
+      </fieldset>
       <div class="row">
         <button id="fillBtn" class="grow" title="fill every tile of this map with the selected tile">Fill map with tile</button>
         <button id="blankBtn" title="blank this map: fill with the selected tile and remove ALL sprites">Blank map</button>
@@ -147,6 +172,7 @@
       <div class="row">Bank <select id="spriteBank"></select>
         <button id="placeBtn" disabled>Place mode</button>
         <button id="clearSpritesBtn" title="remove every sprite from this map (tiles untouched)">Clear all</button></div>
+      <label class="hint"><input type="checkbox" id="groupSpriteChk"> group variants by shared graphic</label>
       <div id="spriteList"></div>
       <div id="spritePrev">
         <canvas id="spritePrevCanvas" width="32" height="32"></canvas>
@@ -170,6 +196,7 @@
     <div class="panel" id="panelLib">
       <div class="row">Bank <select id="libBank"></select>
         <button id="dupBtn" disabled title="append a copy as a new entry">Duplicate</button></div>
+      <label class="hint"><input type="checkbox" id="groupLibChk"> group variants by shared graphic</label>
       <div id="libList"></div>
       <fieldset id="libForm" style="display:none">
         <legend>stats</legend>
@@ -196,7 +223,8 @@
           <button id="musicResetBtn">Original</button>
         </div>
       </fieldset>
-      <div class="hint">The original engine hard-codes eight soundtrack slots. Levels sharing a slot always share its track. Custom files must use the DMX MUS format, not MIDI/MP3/WAV.</div>
+      <div class="hint">The original engine hard-codes eight soundtrack slots. Levels sharing a slot always share its track. Custom files must use the DMX MUS format, not MIDI/MP3/WAV &mdash;
+        convert MIDI files first with <a href="https://github.com/skynettx/midi3mus/releases" target="_blank" rel="noopener">midi3mus</a>.</div>
     </div>
   </aside>
   <div id="wrap"><canvas id="map" width="288" height="4800"></canvas></div>
@@ -223,7 +251,8 @@
   <h3>Tiles tab</h3>
   <p>Pick a tileset bank and a tile, then click/drag on the map to paint.
   <b>Right-click the map</b> to eyedrop any tile. A red dot in the picker marks
-  destructible tiles; the info box shows what they break into and their bounty.</p>
+  destructible tiles; select one to edit what it breaks into, its hit points,
+  and its bounty.</p>
   <h3>Sprites tab</h3>
   <p>Click a placed enemy to select it (its <b>flight path</b> overlays in cyan),
   drag to move, <kbd>Del</kbd> to remove. Pick a library entry and <i>Place mode</i>
@@ -243,7 +272,9 @@
   <p>Choose another built-in track or import a DMX <b>.MUS</b> file for the current
   level's soundtrack slot. The original engine hard-codes eight shared slots, so
   every other affected level is shown in yellow. MIDI, MP3, WAV, and Ogg files must
-  be converted to DMX MUS externally before importing.</p>
+  be converted to DMX MUS externally before importing &mdash; for MIDI, skynettx's
+  <a href="https://github.com/skynettx/midi3mus/releases" target="_blank" rel="noopener">midi3mus</a>
+  does exactly this.</p>
   <h3>Saving &amp; testing</h3>
   <p><b>Download GLB</b> saves patched copies of every archive you touched.
   Back up your originals, drop the patched files next to any Raptor that reads
@@ -251,8 +282,9 @@
   uses the same original data but remains untested with modified archives.
   JSON export/import matches the companion command-line tools.</p>
   <h3>Shortcuts</h3>
-  <p><kbd>Ctrl+Z</kbd> undo (per map / per library bank) &middot; <kbd>Del</kbd> delete
-  selected sprite &middot; <kbd>Esc</kbd> exit place mode or close this help.</p>
+  <p><kbd>Ctrl+Z</kbd> undo &middot; <kbd>Ctrl+Y</kbd> / <kbd>Ctrl+Shift+Z</kbd> redo
+  (per map / per library bank) &middot; <kbd>Del</kbd> delete selected sprite &middot;
+  <kbd>Esc</kbd> exit place mode or close this help.</p>
   <h3>About</h3>
   <p>Built by a lifelong Raptor fan by studying the released DOS source code and the
   GPL-2 open-source port. Every file format was validated byte-for-byte against the
@@ -459,6 +491,57 @@ function deleteSpritePreservingGroups(sprites, index) {
   return sprites;
 }
 
+function collectMapWarnings(map, assets = {}) {
+  const findings = [];
+  const sprites = Array.isArray(map?.sprites) ? map.sprites : [];
+  const bank = (collection, n) => {
+    if (!collection) return undefined;
+    if (collection instanceof Map) return collection.get(n);
+    return collection[n];
+  };
+  if (!sprites.length)
+    findings.push({ code: "empty-map", severity: "warning", message: "map has no sprites" });
+  sprites.forEach((s, spriteIndex) => {
+    if (!Object.hasOwn(LEVEL_NAMES, s.level)) findings.push({
+      code: "unused-level", severity: "warning", spriteIndex, row: s.y, col: s.x,
+      message: `sprite ${spriteIndex} has level ${s.level}, which never spawns`,
+    });
+  });
+  let groupStart = 0, previousHead = null, groupIndex = 0;
+  for (let i = 0; i < sprites.length; i++) {
+    if (i === groupStart) {
+      const head = sprites[i];
+      if (previousHead && head.y > previousHead.y) findings.push({
+        code: "spawn-order", severity: "warning", spriteIndex: i, groupIndex,
+        row: head.y, col: head.x,
+        message: `spawn group ${groupIndex} at row ${head.y} follows row ${previousHead.y} and stalls the cursor`,
+      });
+      previousHead = head;
+    }
+    if (sprites[i].link === 1 || sprites[i].link === -1) {
+      groupStart = i + 1;
+      groupIndex++;
+    }
+  }
+  if (assets.flatsLibs && Array.isArray(map?.tiles))
+    map.tiles.forEach((row, r) => row.forEach((cell, c) => {
+      const flats = bank(assets.flatsLibs, cell.fgame);
+      if (!Array.isArray(flats) || cell.flats < 0 || cell.flats >= flats.length)
+        findings.push({
+          code: "missing-tile", severity: "warning", row: r, col: c,
+          message: `tile ${r},${c} references missing G${cell.fgame + 1}:${cell.flats}`,
+        });
+    }));
+  if (assets.spriteLibs) sprites.forEach((s, spriteIndex) => {
+    const lib = bank(assets.spriteLibs, s.game);
+    if (!Array.isArray(lib) || s.slib < 0 || s.slib >= lib.length) findings.push({
+      code: "missing-sprite", severity: "warning", spriteIndex, row: s.y, col: s.x,
+      message: `sprite ${spriteIndex} references missing G${s.game + 1}:${s.slib}`,
+    });
+  });
+  return findings;
+}
+
 const MAX_SPAWN_ROW = 139;                          // scroll starts at row 139
 
 /* Full 528-byte SPRITE records (MAP.H:95-132). Field names match the Python
@@ -550,6 +633,22 @@ function parseFlats(u8) {
   return out;
 }
 
+function buildFlats(flats) {
+  if (!Array.isArray(flats)) throw new Error("flats table must be an array");
+  const out = new Uint8Array(flats.length * 8), dv = new DataView(out.buffer);
+  flats.forEach((fl, i) => {
+    if (!fl || typeof fl !== "object") throw new Error(`flat ${i} must be an object`);
+    intField(fl.linkflat, `flat ${i} linkflat`, -0x80000000, 0x7FFFFFFF);
+    intField(fl.bonus, `flat ${i} bonus`, -32768, 32767);
+    intField(fl.bounty, `flat ${i} bounty`, -32768, 32767);
+    const o = i * 8;
+    dv.setInt32(o, fl.linkflat, true);
+    dv.setInt16(o + 4, fl.bonus, true);
+    dv.setInt16(o + 6, fl.bounty, true);
+  });
+  return out;
+}
+
 /* GFX_PIC -> {w, h, rgba} (Uint8ClampedArray, transparent where unmasked) */
 function decodePic(u8, palette) {
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
@@ -591,6 +690,7 @@ if (typeof document !== "undefined") (function initUI() {
   const levels = new Map();         // map name -> parsed level (live edit state)
   const dirty = new Set();          // map names with uncommitted edits
   const undoStacks = new Map();     // map name -> [json...]
+  const redoStacks = new Map();     // map name -> [json...]
   let curMap = null;                // current map name
   let mode = "tiles";
   let zoom = 2;
@@ -603,6 +703,7 @@ if (typeof document !== "undefined") (function initUI() {
   const tilesetStart = new Map();   // bank -> first tile item id
   const spriteLibs = new Map();     // bank -> parsed lib
   const flatsLibs = new Map();      // bank -> parsed flats
+  const dirtyFlats = new Set();     // bank numbers with edited FLATS records
   const MUSIC_SLOTS = [
     ["RAP8_MUS", "RAP2_MUS", "RAP4_MUS", "RAP7_MUS", "RAP6_MUS", "RAP2_MUS", "RAP3_MUS", "RAP4_MUS", "RAP6_MUS"],
     ["RAP3_MUS", "RAP2_MUS", "RAP4_MUS", "RAP8_MUS", "RAP6_MUS", "RAP2_MUS", "RAP8_MUS", "RAP1_MUS", "RAP6_MUS"],
@@ -684,7 +785,7 @@ if (typeof document !== "undefined") (function initUI() {
       } catch (e) { dropMsg(`Failed to parse ${esc(f.name)}: ${esc(e.message)}`); return; }
     }
     const replacing = [...incoming.keys()].some(n => files.has(n));
-    if (replacing && (dirty.size || dirtyLibs.size || dirtyMusicSlots.size) &&
+    if (replacing && (dirty.size || dirtyLibs.size || dirtyFlats.size || dirtyMusicSlots.size) &&
         !confirm("Loading a replacement archive starts a new session and discards current edits. Continue?")) return;
     if (replacing) resetSession();
     for (const [n, f] of incoming) files.set(n, f);
@@ -697,7 +798,9 @@ if (typeof document !== "undefined") (function initUI() {
         <span class="hint">Expected names like FILE0000.GLB &ndash; FILE0004.GLB</span>`);
       return;
     }
-    picCache.clear(); tilesetStart.clear(); spriteLibs.clear(); flatsLibs.clear();
+    picCache.clear(); tilesetStart.clear();
+    for (const bank of [...spriteLibs.keys()]) if (!dirtyLibs.has(bank)) spriteLibs.delete(bank);
+    for (const bank of [...flatsLibs.keys()]) if (!dirtyFlats.has(bank)) flatsLibs.delete(bank);
     const palId = itemId("PALETTE_DAT");
     if (palId < 0) {
       dropMsg(`Loaded: <b>${esc(loaded)}</b> &mdash; keep going!${skipNote}<br>
@@ -726,11 +829,13 @@ if (typeof document !== "undefined") (function initUI() {
   }
 
   function resetSession() {
-    files.clear(); levels.clear(); dirty.clear(); undoStacks.clear();
+    files.clear(); levels.clear(); dirty.clear(); undoStacks.clear(); redoStacks.clear();
     picCache.clear(); tilesetStart.clear(); spriteLibs.clear(); flatsLibs.clear();
-    dirtyLibs.clear(); libUndo.clear(); musicSources.clear(); musicAssignments.clear(); dirtyMusicSlots.clear();
+    dirtyLibs.clear(); libUndo.clear(); libRedo.clear(); dirtyFlats.clear();
+    musicSources.clear(); musicAssignments.clear(); dirtyMusicSlots.clear();
     mapIndex = []; palette = null; curMap = null; curTile = null; curLibSel = null;
     selSprite = -1; libSel = -1; placing = dragging = painting = false; customMusicSerial = 0;
+    $("flatsForm").style.display = "none";
   }
 
   function initializeMusic() {
@@ -762,6 +867,7 @@ if (typeof document !== "undefined") (function initUI() {
     if (!dirty.has(name)) return;
     const lv = levels.get(name);
     lv.sprites = normalizeSpawnOrder(lv.sprites);   // engine spawn-cursor invariant
+    validateMapAssets(lv);
     const entry = mapIndex.find(m => m.name === name);
     files.get(entry.filenum).glb.items[entry.idx].data = buildMap(lv);
   }
@@ -793,10 +899,10 @@ if (typeof document !== "undefined") (function initUI() {
     updateMusicPanel();
     redraw();
     $("wrap").scrollTop = $("wrap").scrollHeight;   // level starts at the bottom
-    updateSaveBtn(); updateUndoBtn();
+    updateSaveBtn(); updateUndoBtn(); scheduleWarnings();
   }
 
-  function markDirty() { dirty.add(curMap); updateSaveBtn(); }
+  function markDirty() { dirty.add(curMap); updateSaveBtn(); scheduleWarnings(); }
 
   function pushUndo(name = curMap) {
     if (!name || !levels.has(name)) return;
@@ -804,22 +910,43 @@ if (typeof document !== "undefined") (function initUI() {
     const st = undoStacks.get(name);
     st.push(JSON.stringify(levels.get(name)));
     if (st.length > 100) st.shift();
+    redoStacks.delete(name);
     updateUndoBtn();
   }
 
   function undo() {
     const st = undoStacks.get(curMap);
     if (!st || !st.length) return;
+    if (!redoStacks.has(curMap)) redoStacks.set(curMap, []);
+    const redo = redoStacks.get(curMap);
+    redo.push(JSON.stringify(level()));
+    if (redo.length > 100) redo.shift();
+    levels.set(curMap, JSON.parse(st.pop()));
+    selSprite = -1;
+    markDirty(); updateProps(); redraw(); updateUndoBtn();
+  }
+
+  function redo() {
+    const st = redoStacks.get(curMap);
+    if (!st || !st.length) return;
+    if (!undoStacks.has(curMap)) undoStacks.set(curMap, []);
+    const undo = undoStacks.get(curMap);
+    undo.push(JSON.stringify(level()));
+    if (undo.length > 100) undo.shift();
     levels.set(curMap, JSON.parse(st.pop()));
     selSprite = -1;
     markDirty(); updateProps(); redraw(); updateUndoBtn();
   }
 
   const updateUndoBtn = () => {
-    const available = mode === "library"
+    const undoAvailable = mode === "library"
       ? (libUndo.get(+$("libBank").value) || []).length
       : mode === "music" ? 0 : (undoStacks.get(curMap) || []).length;
-    $("undoBtn").disabled = !available;
+    const redoAvailable = mode === "library"
+      ? (libRedo.get(+$("libBank").value) || []).length
+      : mode === "music" ? 0 : (redoStacks.get(curMap) || []).length;
+    $("undoBtn").disabled = !undoAvailable;
+    $("redoBtn").disabled = !redoAvailable;
   };
 
   function validateMapAssets(m) {
@@ -843,6 +970,10 @@ if (typeof document !== "undefined") (function initUI() {
       const id = itemId(`SPRITE${bank + 1}_ITM`);
       if (id >= 0) nums.add(id >> 16);
     }
+    for (const bank of dirtyFlats) {
+      const id = itemId(`FLATSG${bank + 1}_ITM`);
+      if (id >= 0) nums.add(id >> 16);
+    }
     for (const slot of dirtyMusicSlots) {
       const id = itemId(slot);
       if (id >= 0) nums.add(id >> 16);
@@ -858,10 +989,50 @@ if (typeof document !== "undefined") (function initUI() {
       return;
     }
     $("saveBtn").textContent = `Download ${nums.map(n => files.get(n).filename).join(" + ")}` +
-      ` (${dirty.size + dirtyLibs.size + dirtyMusicSlots.size} edited)`;
+      ` (${dirty.size + dirtyLibs.size + dirtyFlats.size + dirtyMusicSlots.size} edited)`;
   }
 
   const setStatus = t => $("status").textContent = t;
+
+  let warningFindings = [], warningsPending = false;
+  function scheduleWarnings() {
+    if (warningsPending) return;
+    warningsPending = true;
+    requestAnimationFrame(() => { warningsPending = false; refreshWarnings(); });
+  }
+
+  function refreshWarnings() {
+    const lv = level();
+    if (!lv) { $("warnings").classList.add("hide"); return; }
+    const spriteAssets = new Map(), flatAssets = new Map();
+    for (const s of lv.sprites) if (!spriteAssets.has(s.game))
+      spriteAssets.set(s.game, bankData(spriteLibs, s.game));
+    for (const row of lv.tiles) for (const cell of row) if (!flatAssets.has(cell.fgame))
+      flatAssets.set(cell.fgame, bankData(flatsLibs, cell.fgame));
+    warningFindings = collectMapWarnings(lv, { spriteLibs: spriteAssets, flatsLibs: flatAssets });
+    $("warnings").classList.toggle("hide", !warningFindings.length);
+    $("warningSummary").textContent = `${warningFindings.length} map warning${warningFindings.length === 1 ? "" : "s"}`;
+    $("warningList").innerHTML = warningFindings.map((f, i) =>
+      `<button type="button" data-warning="${i}">${esc(f.message)}</button>`).join("");
+  }
+
+  $("warningList").addEventListener("click", e => {
+    const button = e.target.closest("button[data-warning]");
+    if (!button) return;
+    const finding = warningFindings[+button.dataset.warning];
+    if (!finding) return;
+    if (Number.isInteger(finding.spriteIndex)) {
+      switchTab("sprites");
+      selSprite = finding.spriteIndex;
+      updateProps(); redraw();
+    } else if (Number.isInteger(finding.row) && Number.isInteger(finding.col)) {
+      switchTab("tiles");
+      const cell = level().tiles[finding.row][finding.col];
+      selectTile(cell.fgame, cell.flats);
+    }
+    if (Number.isInteger(finding.row))
+      $("wrap").scrollTop = Math.max(0, finding.row * TILE * zoom - $("wrap").clientHeight / 2);
+  });
 
   // ---- rendering ----------------------------------------------------------
   let rafPending = false;
@@ -981,8 +1152,39 @@ if (typeof document !== "undefined") (function initUI() {
     $("tileSelInfo").innerHTML = `tile <b>${flats}</b> bank G${bank + 1}` +
       (fl && fl.linkflat !== flats
         ? `<br>destructible &rarr; ${fl.linkflat}, hp ${fl.bonus}, $${fl.bounty}` : "");
+    const destructible = fl && fl.linkflat !== flats;
+    $("flatsForm").style.display = destructible ? "" : "none";
+    if (destructible) {
+      $("flatLink").max = bankData(flatsLibs, bank).length - 1;
+      $("flatLink").value = fl.linkflat;
+      $("flatBonus").value = fl.bonus;
+      $("flatBounty").value = fl.bounty;
+    }
     drawTileGrid();
   }
+
+  function editSelectedFlat() {
+    if (!curTile) return;
+    const table = bankData(flatsLibs, curTile.bank), fl = table[curTile.flats];
+    if (!fl || fl.linkflat === curTile.flats) return;
+    const linkflat = +$("flatLink").value, bonus = +$("flatBonus").value,
+      bounty = +$("flatBounty").value;
+    try {
+      intField(linkflat, "break target", 0, table.length - 1);
+      intField(bonus, "hit points", -32768, 32767);
+      intField(bounty, "bounty", -32768, 32767);
+      fl.linkflat = linkflat; fl.bonus = bonus; fl.bounty = bounty;
+      dirtyFlats.add(curTile.bank);
+      updateSaveBtn(); selectTile(curTile.bank, curTile.flats); scheduleWarnings();
+      setStatus(`edited destructible tile G${curTile.bank + 1}:${curTile.flats}`);
+    } catch (err) {
+      setStatus(`tile property edit failed: ${err.message}`);
+      selectTile(curTile.bank, curTile.flats);
+    }
+  }
+
+  for (const id of ["flatLink", "flatBonus", "flatBounty"])
+    $(id).addEventListener("change", editSelectedFlat);
 
   $("tileGridCanvas").addEventListener("mousedown", e => {
     const r = e.target.getBoundingClientRect();
@@ -995,14 +1197,34 @@ if (typeof document !== "undefined") (function initUI() {
   $("tileBank").addEventListener("change", drawTileGrid);
 
   // ---- sprite library panel --------------------------------------------------
+  function libraryListHtml(lib, selected, grouped, includeStats) {
+    const entries = lib.map((entry, index) => ({ entry, index }));
+    if (grouped) entries.sort((a, b) =>
+      a.entry.iname.localeCompare(b.entry.iname) || a.index - b.index);
+    const counts = new Map();
+    if (grouped) for (const { entry } of entries)
+      counts.set(entry.iname, (counts.get(entry.iname) || 0) + 1);
+    let previousGraphic = null, html = "";
+    for (const { entry, index } of entries) {
+      if (grouped && entry.iname !== previousGraphic) {
+        const count = counts.get(entry.iname);
+        html += `<div class="groupHead">${esc(entry.iname)} &middot; ${count} variant${count === 1 ? "" : "s"}</div>`;
+        previousGraphic = entry.iname;
+      }
+      html += `<div data-i="${index}"${index === selected ? ' class="sel"' : ""}>` +
+        `<span style="color:var(--dim)">${String(index).padStart(3)}</span> ` +
+        `${esc(entry.iname.replace(/(G\d)?_(PIC|BLK)$/, ""))}` +
+        (includeStats ? ` <span style="color:var(--dim);margin-left:auto">hp ${entry.hits}</span>` : "") +
+        `</div>`;
+    }
+    return html;
+  }
+
   function drawSpriteList() {
     const bank = +$("spriteBank").value;
     const lib = bankData(spriteLibs, bank);
-    $("spriteList").innerHTML = lib.map((s, i) =>
-      `<div data-i="${i}"${curLibSel && curLibSel.bank === bank && curLibSel.slib === i ? ' class="sel"' : ""}>` +
-      `<span style="color:var(--dim)">${String(i).padStart(3)}</span> ` +
-      `${esc(s.iname.replace(/(G\d)?_(PIC|BLK)$/, ""))} <span style="color:var(--dim);margin-left:auto">hp ${s.hits}</span></div>`
-    ).join("");
+    const selected = curLibSel && curLibSel.bank === bank ? curLibSel.slib : -1;
+    $("spriteList").innerHTML = libraryListHtml(lib, selected, $("groupSpriteChk").checked, true);
     $("placeBtn").disabled = !curLibSel;
   }
 
@@ -1028,6 +1250,7 @@ if (typeof document !== "undefined") (function initUI() {
     selectPlacementType(bank, slib);
   });
   $("spriteBank").addEventListener("change", drawSpriteList);
+  $("groupSpriteChk").addEventListener("change", drawSpriteList);
 
   $("placeBtn").addEventListener("click", () => {
     placing = !placing;
@@ -1150,6 +1373,11 @@ if (typeof document !== "undefined") (function initUI() {
       placing = false; $("placeBtn").textContent = "Place mode";
     }
     else if (e.key === "Delete" && mode === "sprites") deleteSelected();
+    else if (e.ctrlKey && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
+      e.preventDefault();
+      if (mode === "library") redoLib();
+      else if (mode !== "music") redo();
+    }
     else if (e.ctrlKey && e.key.toLowerCase() === "z") {
       e.preventDefault();
       if (mode === "library") popLibUndo();
@@ -1161,6 +1389,7 @@ if (typeof document !== "undefined") (function initUI() {
   let libSel = -1;                    // index into current lib bank
   const dirtyLibs = new Set();        // bank numbers with edits
   const libUndo = new Map();          // bank -> [json snapshots]
+  const libRedo = new Map();          // bank -> [json snapshots]
   const LIB_FIELDS = [                // curated editable stats
     ["hits", "hit points"], ["money", "bounty $"], ["movespeed", "move speed"],
     ["shootframe", "shoot rate"], ["shootcnt", "shots/burst"], ["shootstart", "shoot delay"],
@@ -1177,6 +1406,7 @@ if (typeof document !== "undefined") (function initUI() {
     const st = libUndo.get(bank);
     st.push(JSON.stringify(curLib()));
     if (st.length > 100) st.shift();
+    libRedo.delete(bank);
     updateUndoBtn();
   }
 
@@ -1184,23 +1414,38 @@ if (typeof document !== "undefined") (function initUI() {
     const bank = +$("libBank").value;
     const st = libUndo.get(bank);
     if (!st || !st.length) return;
+    if (!libRedo.has(bank)) libRedo.set(bank, []);
+    const redo = libRedo.get(bank);
+    redo.push(JSON.stringify(curLib()));
+    if (redo.length > 100) redo.shift();
     spriteLibs.set(bank, JSON.parse(st.pop()));
     dirtyLibs.add(bank);
     drawLibList(); selectLibEntry(Math.min(libSel, curLib().length - 1));
-    updateSaveBtn(); updateUndoBtn(); redraw();
+    updateSaveBtn(); updateUndoBtn(); redraw(); scheduleWarnings();
+  }
+
+  function redoLib() {
+    const bank = +$("libBank").value;
+    const st = libRedo.get(bank);
+    if (!st || !st.length) return;
+    if (!libUndo.has(bank)) libUndo.set(bank, []);
+    const undo = libUndo.get(bank);
+    undo.push(JSON.stringify(curLib()));
+    if (undo.length > 100) undo.shift();
+    spriteLibs.set(bank, JSON.parse(st.pop()));
+    dirtyLibs.add(bank);
+    drawLibList(); selectLibEntry(Math.min(libSel, curLib().length - 1));
+    updateSaveBtn(); updateUndoBtn(); redraw(); scheduleWarnings();
   }
 
   function markLibDirty() {
     dirtyLibs.add(+$("libBank").value);
-    updateSaveBtn(); redraw();
+    updateSaveBtn(); redraw(); scheduleWarnings();
   }
 
   function drawLibList() {
     const lib = curLib();
-    $("libList").innerHTML = lib.map((s, i) =>
-      `<div data-i="${i}"${i === libSel ? ' class="sel"' : ""}>` +
-      `<span style="color:var(--dim)">${String(i).padStart(3)}</span> ` +
-      `${esc(s.iname.replace(/(G\d)?_(PIC|BLK)$/, ""))}</div>`).join("");
+    $("libList").innerHTML = libraryListHtml(lib, libSel, $("groupLibChk").checked, false);
     $("dupBtn").disabled = libSel < 0;
   }
 
@@ -1233,6 +1478,7 @@ if (typeof document !== "undefined") (function initUI() {
     if (div) selectLibEntry(+div.dataset.i);
   });
   $("libBank").addEventListener("change", () => { libSel = -1; selectLibEntry(-1); });
+  $("groupLibChk").addEventListener("change", drawLibList);
 
   $("libIname").addEventListener("change", () => {
     const s = curEntry();
@@ -1373,6 +1619,13 @@ if (typeof document !== "undefined") (function initUI() {
     if (id >= 0) byId(id).data = buildSpriteLib(bankData(spriteLibs, bank));
   }
 
+  function commitFlats(bank) {
+    if (!dirtyFlats.has(bank)) return;
+    const id = itemId(`FLATSG${bank + 1}_ITM`);
+    if (id < 0) throw new Error(`FLATSG${bank + 1}_ITM is not loaded`);
+    byId(id).data = buildFlats(bankData(flatsLibs, bank));
+  }
+
   // ---- Music: the engine hard-codes one shared RAPn_MUS slot per level -------
   function musicSlotForMap(name = curMap) {
     const m = /^MAP([1-9])G([1-3])_MAP$/.exec(name || "");
@@ -1484,7 +1737,14 @@ if (typeof document !== "undefined") (function initUI() {
     markDirty(); redraw();
     setStatus(`cleared all sprites on ${curMap}`);
   });
-  $("undoBtn").addEventListener("click", undo);
+  $("undoBtn").addEventListener("click", () => {
+    if (mode === "library") popLibUndo();
+    else if (mode !== "music") undo();
+  });
+  $("redoBtn").addEventListener("click", () => {
+    if (mode === "library") redoLib();
+    else if (mode !== "music") redo();
+  });
 
   function download(bytes, filename) {
     const a = document.createElement("a");
@@ -1498,11 +1758,12 @@ if (typeof document !== "undefined") (function initUI() {
     try {
       for (const name of dirty) commit(name);
       for (const bank of dirtyLibs) commitLib(bank);
+      for (const bank of dirtyFlats) commitFlats(bank);
       let nums = affectedFiles();
       if (!nums.length) nums = [mapIndex.find(m => m.name === curMap).filenum];
       nums.forEach((n, i) => setTimeout(() =>
         download(buildGlb(files.get(n).glb), files.get(n).filename), i * 400));
-      dirty.clear(); dirtyLibs.clear(); dirtyMusicSlots.clear();
+      dirty.clear(); dirtyLibs.clear(); dirtyFlats.clear(); dirtyMusicSlots.clear();
       updateSaveBtn();
       setStatus(`saved ${nums.map(n => files.get(n).filename).join(", ")} - back up originals before overwriting!`);
     } catch (err) { setStatus(`save failed: ${err.message}`); }
@@ -1554,7 +1815,9 @@ if (typeof document !== "undefined") (function initUI() {
     e.preventDefault();
     if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
   });
-  window.addEventListener("beforeunload", e => { if (dirty.size || dirtyLibs.size || dirtyMusicSlots.size) e.preventDefault(); });
+  window.addEventListener("beforeunload", e => {
+    if (dirty.size || dirtyLibs.size || dirtyFlats.size || dirtyMusicSlots.size) e.preventDefault();
+  });
 
 })();
 </script>
