@@ -1,4 +1,13 @@
-# Code review — uncommitted Phase 4 changes
+# Code review — Phase 4 changes
+
+**Status (2026-07-16): all findings resolved** in `8be6e13`. Every numbered
+finding below was fixed and covered by a regression test (index-addressed
+`pics` with unnamed-item fixtures, strict/lenient validator split, per-frame
+replacement, append-aware undo, frame-name dedup, session-reset art clearing,
+correct MUS channel counts, lowest-compatible rapmod version). The minor
+cleanups were applied as well. Verified by the full battery: 33 core checks,
+9 Python tests, 9 Playwright browser tests, all green; CI passing. The
+findings are retained below for the record.
 
 **Date:** 2026-07-16
 **Scope:** working-tree diff against `ecd483a` (11 files: browser PNG import,
@@ -186,12 +195,16 @@ instead of `noteChannels.size`.
   the box's visibility check also lacks the `< visual.count` upper bound used
   by the value refresh.
 
-## Before committing
+## Resolution
 
-1. **Run the real-data suite**: `node tests/test_editor_core.mjs <glb-dir>`
-   plus a manual browser load of the original archives. Both validators got
-   significantly stricter and neither has been exercised against shipped GLBs
-   in this tree (findings 3 and 5 hinge on exactly this; finding 1 reproduces
-   immediately on any export).
-2. Fix findings 1–4 (sharing is broken or dangerous without them).
-3. Findings 5–10 are important but not release-blocking once 1–4 land.
+All ten findings and the minor cleanups were fixed in `8be6e13`. The one
+check that cannot run in this repository or CI (by design, no game data is
+committed) is the real-data integration suite:
+
+```
+node tests/test_editor_core.mjs <glb-dir>
+```
+
+Run it once against your own `FILE0000.GLB`–`FILE0004.GLB` after any change
+to the parsers or validators, alongside a manual browser load of the
+original archives.
