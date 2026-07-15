@@ -111,6 +111,8 @@
   }
   #drop .box:hover { border-color: var(--accent); }
   #dropMsg .hint { font-size: 14px; }
+  #recovery { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+  #recovery.hide { display: none; }
   kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 3px;
     padding: 0 5px; font-family: Consolas, monospace; }
 </style>
@@ -120,6 +122,8 @@
 <header>
   <span class="title">Raptor Map Editor</span>
   <label class="file">Load GLBs<input type="file" id="fileInput" multiple accept=".glb,.GLB"></label>
+  <button id="openFolderBtn" hidden>Open game folder&hellip;</button>
+  <button id="reloadFolderBtn" hidden>Reload game folder</button>
   <select id="mapSelect" disabled></select>
   <select id="zoomSelect"><option value="1">1&times;</option><option value="2" selected>2&times;</option><option value="3">3&times;</option></select>
   <label><input type="checkbox" id="labelsChk" checked> labels</label>
@@ -173,13 +177,16 @@
         <button id="placeBtn" disabled>Place mode</button>
         <button id="clearSpritesBtn" title="remove every sprite from this map (tiles untouched)">Clear all</button></div>
       <label class="hint"><input type="checkbox" id="groupSpriteChk"> group variants by shared graphic</label>
+      <div class="row"><button id="copyBtn" disabled>Copy groups</button>
+        <button id="pasteBtn" disabled>Paste at cursor</button>
+        <span id="selectionInfo" class="hint grow">no sprites selected</span></div>
       <div id="spriteList"></div>
       <div id="spritePrev">
         <canvas id="spritePrevCanvas" width="32" height="32"></canvas>
         <div id="spritePrevInfo" class="hint">select a library entry</div>
       </div>
       <fieldset id="props" style="display:none">
-        <legend>selected sprite</legend>
+        <legend id="propsLegend">selected sprite</legend>
         <div class="row">type <select id="propSlib" class="grow"></select></div>
         <div class="row">difficulty <select id="propLevel">
           <option value="3">easy</option><option value="4">medium</option>
@@ -191,7 +198,8 @@
           y <input type="number" id="propY" min="0" max="139" title="rows 140-149 never spawn (scroll starts at 139)">
           <button id="delBtn">Delete</button></div>
       </fieldset>
-      <div class="hint">click = select &middot; drag = move &middot; <kbd>Del</kbd> remove &middot; <kbd>Esc</kbd> exit place mode</div>
+      <div class="hint">click = select &middot; shift-drag = rectangle select &middot; arrows/drag = move &middot;
+        <kbd>Ctrl+C</kbd>/<kbd>Ctrl+V</kbd> copy/paste groups &middot; <kbd>Del</kbd> remove</div>
     </div>
     <div class="panel" id="panelLib">
       <div class="row">Bank <select id="libBank"></select>
@@ -237,6 +245,17 @@
   <div id="dropMsg">Drop FILE0000.GLB &ndash; FILE0004.GLB here<br>
   <span class="hint">or click to browse &mdash; you can add files one at a time<br>
   100% local: your files never leave this computer</span></div>
+  <div class="row" id="dropFolderActions" style="display:none;justify-content:center;margin-top:12px">
+    <button id="openDropFolderBtn">Open game folder&hellip;</button>
+    <button id="reloadDropFolderBtn" hidden>Reload game folder</button>
+  </div>
+  <div id="recovery" class="hide">
+    <div class="hint" id="recoveryInfo">A saved editing session is available.</div>
+    <div class="row" style="justify-content:center;margin-top:8px">
+      <button id="restoreSessionBtn">Restore last session</button>
+      <button id="freshSessionBtn">Start fresh</button>
+    </div>
+  </div>
   <div style="margin-top:16px;font-size:13px"><a href="#" id="dropHelp"
     style="color:var(--accent)">what is this?</a></div>
 </div></div>
@@ -260,7 +279,10 @@
   <span style="color:#ffd228">medium</span> &middot; <span style="color:#ff3c3c">hard</span>
   &middot; <span style="color:#3cdcdc">secret</span>. Rows 140&ndash;149 never spawn
   (the engine's scroll trigger starts at row 139), so placement is capped there.
-  <b>Clear all</b> removes every sprite from the map without touching the tiles.</p>
+  Shift-drag a rectangle to add several enemies to the selection; dragging,
+  arrow keys, Delete, and difficulty changes then apply to the whole selection.
+  Ctrl+C copies every selected spawn group once and Ctrl+V pastes at the last
+  cursor row. <b>Clear all</b> removes every sprite without touching the tiles.</p>
   <h3>Library tab</h3>
   <p>Edits the enemy definitions themselves &mdash; hit points, bounty, speed, fire rate,
   flight type &mdash; and the flight path on a canvas: drag waypoints, click to add,
@@ -280,7 +302,11 @@
   Back up your originals, drop the patched files next to any Raptor that reads
   v1.2 GLBs (DOS, Steam DOS, or the open-source port) and play. The 2015 Edition
   uses the same original data but remains untested with modified archives.
-  JSON export/import matches the companion command-line tools.</p>
+  On supported Chromium browsers, <b>Open game folder…</b> writes changes
+  directly and creates a non-overwritten <code>.bak</code> before the first
+  write. The editor also keeps a local recovery session in IndexedDB after
+  edits; Restore/Start Fresh appears the next time it opens. JSON export/import
+  matches the companion command-line tools.</p>
   <h3>Shortcuts</h3>
   <p><kbd>Ctrl+Z</kbd> undo &middot; <kbd>Ctrl+Y</kbd> / <kbd>Ctrl+Shift+Z</kbd> redo
   (per map / per library bank) &middot; <kbd>Del</kbd> delete selected sprite &middot;
@@ -697,8 +723,10 @@ if (typeof document !== "undefined") (function initUI() {
   let curTile = null;               // {bank, flats}
   let curLibSel = null;             // {bank, slib} selected in library list
   let placing = false;
-  let selSprite = -1;               // index into level.sprites
-  let dragging = false, painting = false;
+  const selectedSprites = new Set(); // live object identities survive array sorting
+  let primarySprite = null;          // props/flight-path sprite within the selection
+  let dragging = false, painting = false, marquee = null, dragState = null;
+  let spriteClipboard = null, lastCursorCell = { c: 4, r: MAX_SPAWN_ROW };
   const picCache = new Map();       // itemId -> canvas|null
   const tilesetStart = new Map();   // bank -> first tile item id
   const spriteLibs = new Map();     // bank -> parsed lib
@@ -713,8 +741,188 @@ if (typeof document !== "undefined") (function initUI() {
   const musicAssignments = new Map(); // hard-coded slot name -> source key
   const dirtyMusicSlots = new Set();
   let customMusicSerial = 0;
+  const SESSION_DB = "raptor-map-editor", SESSION_STORE = "sessions", SESSION_KEY = "latest";
+  const DIRECTORY_KEY = "game-directory";
+  const SESSION_VERSION = 1;
+  let sessionSaveTimer = 0, restoringSession = false, sessionSaveErrorShown = false;
+  let directoryHandle = null, directorySaveConfirmed = false;
 
   const canvas = $("map"), ctx = canvas.getContext("2d");
+
+  function sessionDb() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(SESSION_DB, 1);
+      request.onupgradeneeded = () => request.result.createObjectStore(SESSION_STORE);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function storedSession(action, value, key = SESSION_KEY) {
+    if (!("indexedDB" in window)) return null;
+    const db = await sessionDb();
+    try {
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(SESSION_STORE, action === "get" ? "readonly" : "readwrite");
+        const store = tx.objectStore(SESSION_STORE);
+        const request = action === "get" ? store.get(key)
+          : action === "put" ? store.put(value, key) : store.delete(key);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error);
+      });
+    } finally { db.close(); }
+  }
+
+  function serializeSession() {
+    if (!files.size) return null;
+    const mapEntries = map => [...map].map(([key, value]) => [key, value]);
+    return {
+      format: "raptor-editor-session", version: SESSION_VERSION, savedAt: Date.now(), curMap,
+      files: [...files].map(([num, file]) => ({
+        num, filename: file.filename, diskName: file.diskName,
+        originalBytes: file.originalBytes, bytes: buildGlb(file.glb),
+      })),
+      levels: mapEntries(levels), dirty: [...dirty], dirtyLibs: [...dirtyLibs],
+      dirtyFlats: [...dirtyFlats], dirtyMusicSlots: [...dirtyMusicSlots],
+      spriteLibs: mapEntries(spriteLibs), flatsLibs: mapEntries(flatsLibs),
+      undoStacks: mapEntries(undoStacks), redoStacks: mapEntries(redoStacks),
+      libUndo: mapEntries(libUndo), libRedo: mapEntries(libRedo),
+      musicSources: mapEntries(musicSources), musicAssignments: mapEntries(musicAssignments),
+      customMusicSerial, spriteClipboard, lastCursorCell,
+    };
+  }
+
+  async function persistSession() {
+    if (restoringSession) return;
+    const snapshot = serializeSession();
+    if (!snapshot) return;
+    try {
+      await storedSession("put", snapshot);
+      sessionSaveErrorShown = false;
+    } catch (err) {
+      if (!sessionSaveErrorShown) {
+        sessionSaveErrorShown = true;
+        setStatus(`session autosave failed: ${err.message}`);
+      }
+    }
+  }
+
+  function scheduleSessionSave() {
+    if (restoringSession || !files.size) return;
+    clearTimeout(sessionSaveTimer);
+    sessionSaveTimer = setTimeout(persistSession, 350);
+  }
+
+  async function clearStoredSession() {
+    clearTimeout(sessionSaveTimer);
+    try { await storedSession("delete"); } catch { /* storage unavailable */ }
+  }
+
+  async function restoreSession(snapshot) {
+    if (!snapshot || snapshot.format !== "raptor-editor-session" || snapshot.version !== SESSION_VERSION)
+      throw new Error("saved session uses an unsupported format version");
+    restoringSession = true;
+    try {
+      resetSession(false);
+      const fileObjects = snapshot.files.map(file =>
+        new File([file.bytes], file.filename, { type: "application/octet-stream" }));
+      await loadFiles(fileObjects);
+      for (const saved of snapshot.files) {
+        const file = files.get(saved.num);
+        if (file) {
+          file.diskName = saved.diskName || saved.filename;
+          file.originalBytes = saved.originalBytes || saved.bytes;
+        }
+      }
+      const restoreMap = (target, entries) => { target.clear(); for (const [k, v] of entries || []) target.set(k, v); };
+      const restoreSet = (target, values) => { target.clear(); for (const value of values || []) target.add(value); };
+      restoreMap(levels, snapshot.levels); restoreMap(spriteLibs, snapshot.spriteLibs);
+      restoreMap(flatsLibs, snapshot.flatsLibs); restoreMap(undoStacks, snapshot.undoStacks);
+      restoreMap(redoStacks, snapshot.redoStacks); restoreMap(libUndo, snapshot.libUndo);
+      restoreMap(libRedo, snapshot.libRedo); restoreMap(musicSources, snapshot.musicSources);
+      restoreMap(musicAssignments, snapshot.musicAssignments);
+      restoreSet(dirty, snapshot.dirty); restoreSet(dirtyLibs, snapshot.dirtyLibs);
+      restoreSet(dirtyFlats, snapshot.dirtyFlats); restoreSet(dirtyMusicSlots, snapshot.dirtyMusicSlots);
+      customMusicSerial = snapshot.customMusicSerial || 0;
+      spriteClipboard = snapshot.spriteClipboard || null;
+      lastCursorCell = snapshot.lastCursorCell || { c: 4, r: MAX_SPAWN_ROW };
+      const target = mapIndex.some(m => m.name === snapshot.curMap) ? snapshot.curMap : mapIndex[0]?.name;
+      if (target) openMap(target);
+      $("drop").classList.add("hide"); updateSaveBtn(); updateUndoBtn(); updateProps();
+      setStatus(`restored session from ${new Date(snapshot.savedAt).toLocaleString()}`);
+    } finally { restoringSession = false; }
+  }
+
+  async function offerStoredSession() {
+    try {
+      const snapshot = await storedSession("get");
+      if (!snapshot) return;
+      $("recovery").classList.remove("hide");
+      $("recoveryInfo").textContent = `Saved session from ${new Date(snapshot.savedAt).toLocaleString()}`;
+      $("restoreSessionBtn").onclick = async e => {
+        e.stopPropagation();
+        try { await restoreSession(snapshot); }
+        catch (err) { dropMsg(`Session restore failed: ${esc(err.message)}`); }
+      };
+      $("freshSessionBtn").onclick = async e => {
+        e.stopPropagation(); await clearStoredSession(); $("recovery").classList.add("hide");
+      };
+    } catch { /* IndexedDB unavailable or blocked */ }
+  }
+
+  async function verifyDirectoryPermission(handle, readwrite = true) {
+    const options = readwrite ? { mode: "readwrite" } : { mode: "read" };
+    if (typeof handle.queryPermission !== "function") return true;
+    if (await handle.queryPermission(options) === "granted") return true;
+    return typeof handle.requestPermission === "function" &&
+      await handle.requestPermission(options) === "granted";
+  }
+
+  async function loadDirectory(handle) {
+    if (!await verifyDirectoryPermission(handle, true)) throw new Error("folder permission was not granted");
+    const picked = [];
+    for await (const [name, entry] of handle.entries())
+      if (entry.kind === "file" && /^FILE\d{4}\.GLB$/i.test(name)) picked.push(await entry.getFile());
+    if (!picked.length) throw new Error("the selected folder contains no FILE000n.GLB archives");
+    await loadFiles(picked);
+    directoryHandle = handle;
+    directorySaveConfirmed = false;
+    $("reloadFolderBtn").hidden = true;
+    updateSaveBtn();
+    try { await storedSession("put", handle, DIRECTORY_KEY); } catch { /* handles may not be persistable */ }
+  }
+
+  async function configureFolderAccess() {
+    const supported = window.isSecureContext && typeof window.showDirectoryPicker === "function";
+    $("openFolderBtn").hidden = !supported;
+    $("dropFolderActions").style.display = supported ? "flex" : "none";
+    if (!supported) return;
+    const pick = async e => {
+      e?.stopPropagation();
+      try {
+        const handle = await window.showDirectoryPicker({ id: "raptor-game", mode: "readwrite" });
+        await loadDirectory(handle);
+      } catch (err) {
+        if (err.name !== "AbortError") setStatus(`open folder failed: ${err.message}`);
+      }
+    };
+    $("openFolderBtn").addEventListener("click", pick);
+    $("openDropFolderBtn").addEventListener("click", pick);
+    try {
+      const saved = await storedSession("get", undefined, DIRECTORY_KEY);
+      if (saved) {
+        $("reloadFolderBtn").hidden = false;
+        $("reloadDropFolderBtn").hidden = false;
+        const reload = async e => {
+          e?.stopPropagation();
+          try { await loadDirectory(saved); }
+          catch (err) { setStatus(`reload folder failed: ${err.message}`); }
+        };
+        $("reloadFolderBtn").onclick = reload;
+        $("reloadDropFolderBtn").onclick = reload;
+      }
+    } catch { /* stored handles unavailable */ }
+  }
 
   // ---- GLB set helpers ----------------------------------------------------
   function itemId(name) {
@@ -781,7 +989,11 @@ if (typeof document !== "undefined") (function initUI() {
       const m = /^FILE(\d{4})\.GLB$/i.exec(f.name);
       if (!m) { skipped.push(f.name); continue; }
       try {
-        incoming.set(parseInt(m[1], 10), { glb: parseGlb(await f.arrayBuffer()), filename: f.name.toUpperCase() });
+        const buffer = await f.arrayBuffer();
+        incoming.set(parseInt(m[1], 10), {
+          glb: parseGlb(buffer), filename: f.name.toUpperCase(), diskName: f.name,
+          originalBytes: new Uint8Array(buffer.slice(0)),
+        });
       } catch (e) { dropMsg(`Failed to parse ${esc(f.name)}: ${esc(e.message)}`); return; }
     }
     const replacing = [...incoming.keys()].some(n => files.has(n));
@@ -828,13 +1040,16 @@ if (typeof document !== "undefined") (function initUI() {
     if (mapIndex.length) openMap(curMap && mapIndex.some(m => m.name === curMap) ? curMap : mapIndex[0].name);
   }
 
-  function resetSession() {
+  function resetSession(clearRecovery = true) {
+    if (clearRecovery) clearStoredSession();
     files.clear(); levels.clear(); dirty.clear(); undoStacks.clear(); redoStacks.clear();
     picCache.clear(); tilesetStart.clear(); spriteLibs.clear(); flatsLibs.clear();
     dirtyLibs.clear(); libUndo.clear(); libRedo.clear(); dirtyFlats.clear();
     musicSources.clear(); musicAssignments.clear(); dirtyMusicSlots.clear();
     mapIndex = []; palette = null; curMap = null; curTile = null; curLibSel = null;
-    selSprite = -1; libSel = -1; placing = dragging = painting = false; customMusicSerial = 0;
+    directoryHandle = null; directorySaveConfirmed = false;
+    clearSpriteSelection(); libSel = -1; placing = dragging = painting = false;
+    marquee = dragState = spriteClipboard = null; customMusicSerial = 0;
     $("flatsForm").style.display = "none";
   }
 
@@ -887,7 +1102,7 @@ if (typeof document !== "undefined") (function initUI() {
       const entry = mapIndex.find(m => m.name === name);
       levels.set(name, parseMap(files.get(entry.filenum).glb.items[entry.idx].data));
     }
-    selSprite = -1; placing = false;
+    clearSpriteSelection(); placing = false;
     // default banks to what the map actually uses
     const counts = {}, scounts = {};
     for (const row of level().tiles) for (const c of row) counts[c.fgame] = (counts[c.fgame] || 0) + 1;
@@ -902,7 +1117,9 @@ if (typeof document !== "undefined") (function initUI() {
     updateSaveBtn(); updateUndoBtn(); scheduleWarnings();
   }
 
-  function markDirty() { dirty.add(curMap); updateSaveBtn(); scheduleWarnings(); }
+  function markDirty() {
+    dirty.add(curMap); updateSaveBtn(); scheduleWarnings(); scheduleSessionSave();
+  }
 
   function pushUndo(name = curMap) {
     if (!name || !levels.has(name)) return;
@@ -922,7 +1139,7 @@ if (typeof document !== "undefined") (function initUI() {
     redo.push(JSON.stringify(level()));
     if (redo.length > 100) redo.shift();
     levels.set(curMap, JSON.parse(st.pop()));
-    selSprite = -1;
+    clearSpriteSelection();
     markDirty(); updateProps(); redraw(); updateUndoBtn();
   }
 
@@ -934,7 +1151,7 @@ if (typeof document !== "undefined") (function initUI() {
     undo.push(JSON.stringify(level()));
     if (undo.length > 100) undo.shift();
     levels.set(curMap, JSON.parse(st.pop()));
-    selSprite = -1;
+    clearSpriteSelection();
     markDirty(); updateProps(); redraw(); updateUndoBtn();
   }
 
@@ -983,12 +1200,13 @@ if (typeof document !== "undefined") (function initUI() {
 
   function updateSaveBtn() {
     const nums = affectedFiles();
+    const verb = directoryHandle ? "Save" : "Download";
     if (!nums.length) {
       const entry = mapIndex.find(m => m.name === curMap);
-      $("saveBtn").textContent = entry ? `Download ${files.get(entry.filenum).filename}` : "Download GLB";
+      $("saveBtn").textContent = entry ? `${verb} ${files.get(entry.filenum).filename}` : `${verb} GLB`;
       return;
     }
-    $("saveBtn").textContent = `Download ${nums.map(n => files.get(n).filename).join(" + ")}` +
+    $("saveBtn").textContent = `${verb} ${nums.map(n => files.get(n).filename).join(" + ")}` +
       ` (${dirty.size + dirtyLibs.size + dirtyFlats.size + dirtyMusicSlots.size} edited)`;
   }
 
@@ -1023,7 +1241,7 @@ if (typeof document !== "undefined") (function initUI() {
     if (!finding) return;
     if (Number.isInteger(finding.spriteIndex)) {
       switchTab("sprites");
-      selSprite = finding.spriteIndex;
+      selectOnlySprite(level().sprites[finding.spriteIndex]);
       updateProps(); redraw();
     } else if (Number.isInteger(finding.row) && Number.isInteger(finding.col)) {
       switchTab("tiles");
@@ -1068,10 +1286,10 @@ if (typeof document !== "undefined") (function initUI() {
       const w = g ? g.width : TILE, h = g ? g.height : TILE;
       if (g) ctx.drawImage(g, x, y);
       ctx.strokeStyle = LEVEL_COLORS[s.level] || "#888";
-      ctx.lineWidth = i === selSprite ? 2 : 1;
+      ctx.lineWidth = selectedSprites.has(s) ? 2 : 1;
       ctx.strokeRect(x + .5, y + .5, w - 1, h - 1);
-      if (i === selSprite) {
-        ctx.strokeStyle = "#fff";
+      if (selectedSprites.has(s)) {
+        ctx.strokeStyle = s === primarySprite ? "#fff" : "#4da3ff";
         ctx.setLineDash([3, 3]);
         ctx.strokeRect(x - 2.5, y - 2.5, w + 5, h + 5);
         ctx.setLineDash([]);
@@ -1088,8 +1306,8 @@ if (typeof document !== "undefined") (function initUI() {
     }
     // flight-path overlay for the selected sprite (waypoints are offsets
     // from the spawn anchor, enemy.cpp:448/812)
-    if (selSprite >= 0) {
-      const s = lv.sprites[selSprite];
+    if (primarySprite && lv.sprites.includes(primarySprite)) {
+      const s = primarySprite;
       const lib = bankData(spriteLibs, s.game)[s.slib];
       if (lib && lib.flighttype <= 2 && lib.numflight > 0) {
         const ax = s.x * TILE + 16, ay = s.y * TILE + 16;
@@ -1108,6 +1326,13 @@ if (typeof document !== "undefined") (function initUI() {
           ctx.fill();
         }
       }
+    }
+    if (marquee) {
+      const x = Math.min(marquee.x1, marquee.x2), y = Math.min(marquee.y1, marquee.y2);
+      const w = Math.abs(marquee.x2 - marquee.x1), h = Math.abs(marquee.y2 - marquee.y1);
+      ctx.fillStyle = "rgba(77,163,255,.15)"; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = "#4da3ff"; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x + .5, y + .5, w, h); ctx.setLineDash([]);
     }
   }
 
@@ -1175,7 +1400,7 @@ if (typeof document !== "undefined") (function initUI() {
       intField(bounty, "bounty", -32768, 32767);
       fl.linkflat = linkflat; fl.bonus = bonus; fl.bounty = bounty;
       dirtyFlats.add(curTile.bank);
-      updateSaveBtn(); selectTile(curTile.bank, curTile.flats); scheduleWarnings();
+      updateSaveBtn(); selectTile(curTile.bank, curTile.flats); scheduleWarnings(); scheduleSessionSave();
       setStatus(`edited destructible tile G${curTile.bank + 1}:${curTile.flats}`);
     } catch (err) {
       setStatus(`tile property edit failed: ${err.message}`);
@@ -1258,9 +1483,30 @@ if (typeof document !== "undefined") (function initUI() {
   });
 
   // ---- selected sprite properties ------------------------------------------
+  function clearSpriteSelection() {
+    selectedSprites.clear(); primarySprite = null;
+  }
+
+  function selectOnlySprite(sprite) {
+    selectedSprites.clear();
+    if (sprite) selectedSprites.add(sprite);
+    primarySprite = sprite || null;
+  }
+
+  function selectedInMap() {
+    const lv = level();
+    if (!lv) return [];
+    return lv.sprites.filter(s => selectedSprites.has(s));
+  }
+
   function updateProps() {
-    const lv = level(), s = lv && lv.sprites[selSprite];
+    const lv = level(), s = lv && lv.sprites.includes(primarySprite) ? primarySprite : null;
+    const count = selectedInMap().length;
     $("props").style.display = s ? "" : "none";
+    $("propsLegend").textContent = count > 1 ? `${count} selected · primary sprite` : "selected sprite";
+    $("selectionInfo").textContent = count ? `${count} sprite${count === 1 ? "" : "s"} selected` : "no sprites selected";
+    $("copyBtn").disabled = !count;
+    $("pasteBtn").disabled = !spriteClipboard;
     if (!s) return;
     const lib = bankData(spriteLibs, s.game);
     $("propSlib").innerHTML = lib.map((l, i) =>
@@ -1270,16 +1516,20 @@ if (typeof document !== "undefined") (function initUI() {
     $("propX").value = s.x; $("propY").value = s.y;
   }
 
-  function propEdit(fn) {
-    const s = level().sprites[selSprite];
+  function propEdit(fn, bulk = false) {
+    const s = primarySprite;
     if (!s) return;
-    pushUndo(); fn(s); markDirty(); redraw();
+    pushUndo();
+    if (bulk) for (const selected of selectedInMap()) fn(selected);
+    else fn(s);
+    markDirty(); updateProps(); redraw();
   }
   $("propSlib").addEventListener("change", () => {
     const slib = +$("propSlib").value;
     propEdit(s => { s.slib = slib; selectPlacementType(s.game, slib); });
   });
-  $("propLevel").addEventListener("change", () => propEdit(s => s.level = +$("propLevel").value));
+  $("propLevel").addEventListener("change", () =>
+    propEdit(s => s.level = +$("propLevel").value, true));
   $("propLink").addEventListener("change", () => {
     const link = +$("propLink").value;
     if (![-1, 0, 1].includes(link)) { setStatus("link must be -1, 0, or 1"); updateProps(); return; }
@@ -1290,12 +1540,77 @@ if (typeof document !== "undefined") (function initUI() {
   $("delBtn").addEventListener("click", deleteSelected);
 
   function deleteSelected() {
-    if (selSprite < 0) return;
+    const lv = level(), indices = selectedInMap().map(s => lv.sprites.indexOf(s))
+      .filter(i => i >= 0).sort((a, b) => b - a);
+    if (!indices.length) return;
     pushUndo();
-    deleteSpritePreservingGroups(level().sprites, selSprite);
-    selSprite = -1;
+    for (const index of indices) deleteSpritePreservingGroups(lv.sprites, index);
+    clearSpriteSelection();
     markDirty(); updateProps(); redraw();
   }
+
+  function selectedSpawnGroups() {
+    const sprites = level()?.sprites || [], groups = [];
+    let start = 0;
+    for (let i = 0; i < sprites.length; i++) {
+      if (sprites[i].link === 1 || sprites[i].link === -1) {
+        const group = sprites.slice(start, i + 1);
+        if (group.some(s => selectedSprites.has(s))) groups.push(group);
+        start = i + 1;
+      }
+    }
+    if (start < sprites.length) {
+      const group = sprites.slice(start);
+      if (group.some(s => selectedSprites.has(s))) groups.push(group);
+    }
+    return groups;
+  }
+
+  function copySelectedGroups() {
+    const groups = selectedSpawnGroups();
+    if (!groups.length) return;
+    spriteClipboard = groups.map(group => JSON.parse(JSON.stringify(group)));
+    $("pasteBtn").disabled = false;
+    scheduleSessionSave();
+    setStatus(`copied ${groups.length} spawn group${groups.length === 1 ? "" : "s"}`);
+  }
+
+  function pasteSpriteGroups() {
+    if (!spriteClipboard || !level()) return;
+    const groups = spriteClipboard.map(group => JSON.parse(JSON.stringify(group)));
+    const pasted = groups.flat();
+    if (!pasted.length) return;
+    const anchorY = groups[0][0].y;
+    const minY = Math.min(...pasted.map(s => s.y)), maxY = Math.max(...pasted.map(s => s.y));
+    let dy = lastCursorCell.r - anchorY;
+    dy = Math.max(-minY, Math.min(MAX_SPAWN_ROW - maxY, dy));
+    for (const s of pasted) s.y += dy;
+    const lv = level(), sprites = normalizeSpawnOrder([...lv.sprites, ...pasted]);
+    validateMapAssets({ ...lv, sprites });
+    pushUndo();
+    lv.sprites = sprites;
+    selectedSprites.clear();
+    for (const s of pasted) selectedSprites.add(s);
+    primarySprite = pasted[0];
+    markDirty(); updateProps(); redraw();
+    setStatus(`pasted ${groups.length} group${groups.length === 1 ? "" : "s"} at row ${primarySprite.y}`);
+  }
+
+  function moveSelected(dx, dy) {
+    const selected = selectedInMap();
+    if (!selected.length) return;
+    const minX = Math.min(...selected.map(s => s.x)), maxX = Math.max(...selected.map(s => s.x));
+    const minY = Math.min(...selected.map(s => s.y)), maxY = Math.max(...selected.map(s => s.y));
+    dx = Math.max(-minX, Math.min(MAP_COLS - 1 - maxX, dx));
+    dy = Math.max(-minY, Math.min(MAX_SPAWN_ROW - maxY, dy));
+    if (!dx && !dy) return;
+    pushUndo();
+    for (const s of selected) { s.x += dx; s.y += dy; }
+    markDirty(); updateProps(); redraw();
+  }
+
+  $("copyBtn").addEventListener("click", copySelectedGroups);
+  $("pasteBtn").addEventListener("click", pasteSpriteGroups);
 
   // ---- map canvas interaction ------------------------------------------------
   function canvasCell(e) {
@@ -1324,6 +1639,7 @@ if (typeof document !== "undefined") (function initUI() {
   canvas.addEventListener("mousedown", e => {
     if (!level()) return;
     const cell = canvasCell(e);
+    lastCursorCell = cell;
     if (e.button === 2) return;                     // handled in contextmenu
     if (mode === "tiles") {
       if (!curTile) { setStatus("select a tile first"); return; }
@@ -1331,31 +1647,70 @@ if (typeof document !== "undefined") (function initUI() {
     } else {
       if (placing && curLibSel) {
         pushUndo();
-        level().sprites.push({ link: 1, slib: curLibSel.slib, x: cell.c,
-          y: Math.min(cell.r, MAX_SPAWN_ROW), game: curLibSel.bank, level: 4 });
-        selSprite = level().sprites.length - 1;
+        const placed = { link: 1, slib: curLibSel.slib, x: cell.c,
+          y: Math.min(cell.r, MAX_SPAWN_ROW), game: curLibSel.bank, level: 4 };
+        level().sprites.push(placed);
+        selectOnlySprite(placed);
         markDirty(); updateProps(); redraw();
         return;
       }
-      selSprite = spriteAt(cell.px, cell.py);
-      if (selSprite >= 0) {
-        dragging = true; pushUndo();
-        const selected = level().sprites[selSprite];
-        selectPlacementType(selected.game, selected.slib);
+      if (e.shiftKey) {
+        marquee = { x1: cell.px, y1: cell.py, x2: cell.px, y2: cell.py };
+        redraw(); return;
       }
+      const index = spriteAt(cell.px, cell.py);
+      if (index >= 0) {
+        const clicked = level().sprites[index];
+        if (!selectedSprites.has(clicked)) selectOnlySprite(clicked);
+        dragging = true;
+        dragState = { start: cell, undoPushed: false,
+          origins: new Map(selectedInMap().map(s => [s, { x: s.x, y: s.y }])) };
+        selectPlacementType(clicked.game, clicked.slib);
+      } else clearSpriteSelection();
       updateProps(); redraw();
     }
   });
 
   canvas.addEventListener("mousemove", e => {
-    if (painting) paintCell(canvasCell(e));
-    else if (dragging && selSprite >= 0) {
-      const cell = canvasCell(e), s = level().sprites[selSprite];
-      const r = Math.min(cell.r, MAX_SPAWN_ROW);
-      if (s.x !== cell.c || s.y !== r) { s.x = cell.c; s.y = r; markDirty(); updateProps(); redraw(); }
+    const cell = canvasCell(e);
+    lastCursorCell = cell;
+    if (painting) paintCell(cell);
+    else if (marquee) {
+      marquee.x2 = cell.px; marquee.y2 = cell.py; redraw();
+    } else if (dragging && dragState) {
+      const origins = [...dragState.origins.values()];
+      const minX = Math.min(...origins.map(o => o.x)), maxX = Math.max(...origins.map(o => o.x));
+      const minY = Math.min(...origins.map(o => o.y)), maxY = Math.max(...origins.map(o => o.y));
+      let dx = cell.c - dragState.start.c, dy = Math.min(cell.r, MAX_SPAWN_ROW) - dragState.start.r;
+      dx = Math.max(-minX, Math.min(MAP_COLS - 1 - maxX, dx));
+      dy = Math.max(-minY, Math.min(MAX_SPAWN_ROW - maxY, dy));
+      let changed = false;
+      for (const [s, origin] of dragState.origins) {
+        if (s.x !== origin.x + dx || s.y !== origin.y + dy) changed = true;
+      }
+      if (changed && !dragState.undoPushed) { pushUndo(); dragState.undoPushed = true; }
+      for (const [s, origin] of dragState.origins) {
+        s.x = origin.x + dx; s.y = origin.y + dy;
+      }
+      if (changed) { markDirty(); updateProps(); redraw(); }
     }
   });
-  window.addEventListener("mouseup", () => { painting = dragging = false; });
+  window.addEventListener("mouseup", () => {
+    if (marquee && level()) {
+      const x1 = Math.min(marquee.x1, marquee.x2), x2 = Math.max(marquee.x1, marquee.x2);
+      const y1 = Math.min(marquee.y1, marquee.y2), y2 = Math.max(marquee.y1, marquee.y2);
+      let first = null;
+      for (const s of level().sprites) {
+        const cx = s.x * TILE + TILE / 2, cy = s.y * TILE + TILE / 2;
+        if (cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2) {
+          selectedSprites.add(s); if (!first) first = s;
+        }
+      }
+      if (first) primarySprite = first;
+      marquee = null; updateProps(); redraw();
+    }
+    painting = dragging = false; dragState = null;
+  });
 
   canvas.addEventListener("contextmenu", e => {       // eyedropper
     e.preventDefault();
@@ -1371,8 +1726,15 @@ if (typeof document !== "undefined") (function initUI() {
     if (e.key === "Escape") {
       $("help").classList.add("hide");
       placing = false; $("placeBtn").textContent = "Place mode";
+      marquee = null; redraw();
     }
     else if (e.key === "Delete" && mode === "sprites") deleteSelected();
+    else if (e.ctrlKey && mode === "sprites" && e.key.toLowerCase() === "c") {
+      e.preventDefault(); copySelectedGroups();
+    }
+    else if (e.ctrlKey && mode === "sprites" && e.key.toLowerCase() === "v") {
+      e.preventDefault(); pasteSpriteGroups();
+    }
     else if (e.ctrlKey && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
       e.preventDefault();
       if (mode === "library") redoLib();
@@ -1382,6 +1744,11 @@ if (typeof document !== "undefined") (function initUI() {
       e.preventDefault();
       if (mode === "library") popLibUndo();
       else if (mode !== "music") undo();  // music edits are not on the undo stacks
+    }
+    else if (mode === "sprites" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      e.preventDefault();
+      moveSelected(e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0,
+        e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0);
     }
   });
 
@@ -1421,7 +1788,7 @@ if (typeof document !== "undefined") (function initUI() {
     spriteLibs.set(bank, JSON.parse(st.pop()));
     dirtyLibs.add(bank);
     drawLibList(); selectLibEntry(Math.min(libSel, curLib().length - 1));
-    updateSaveBtn(); updateUndoBtn(); redraw(); scheduleWarnings();
+    updateSaveBtn(); updateUndoBtn(); redraw(); scheduleWarnings(); scheduleSessionSave();
   }
 
   function redoLib() {
@@ -1435,12 +1802,12 @@ if (typeof document !== "undefined") (function initUI() {
     spriteLibs.set(bank, JSON.parse(st.pop()));
     dirtyLibs.add(bank);
     drawLibList(); selectLibEntry(Math.min(libSel, curLib().length - 1));
-    updateSaveBtn(); updateUndoBtn(); redraw(); scheduleWarnings();
+    updateSaveBtn(); updateUndoBtn(); redraw(); scheduleWarnings(); scheduleSessionSave();
   }
 
   function markLibDirty() {
     dirtyLibs.add(+$("libBank").value);
-    updateSaveBtn(); redraw(); scheduleWarnings();
+    updateSaveBtn(); redraw(); scheduleWarnings(); scheduleSessionSave();
   }
 
   function drawLibList() {
@@ -1645,7 +2012,7 @@ if (typeof document !== "undefined") (function initUI() {
     byId(id).data = source.data.slice();
     musicAssignments.set(slot, sourceKey);
     dirtyMusicSlots.add(slot);
-    updateSaveBtn(); updateMusicPanel();
+    updateSaveBtn(); updateMusicPanel(); scheduleSessionSave();
   }
 
   function updateMusicPanel() {
@@ -1717,7 +2084,7 @@ if (typeof document !== "undefined") (function initUI() {
     pushUndo();
     for (const row of level().tiles)
       for (const cell of row) { cell.flats = curTile.flats; cell.fgame = curTile.bank; }
-    if (clearSprites) { level().sprites = []; selSprite = -1; updateProps(); }
+    if (clearSprites) { level().sprites = []; clearSpriteSelection(); updateProps(); }
     markDirty(); redraw();
     setStatus(clearSprites ? `blanked ${curMap} (tile ${curTile.flats}, sprites cleared)`
       : `filled ${curMap} with tile ${curTile.flats}`);
@@ -1733,7 +2100,7 @@ if (typeof document !== "undefined") (function initUI() {
     if (!lv.sprites.length) { setStatus("no sprites on this map"); return; }
     if (!confirm("Clear all sprites?\n\nRemoves every sprite from this map; tiles are untouched. Undo with Ctrl+Z.")) return;
     pushUndo();
-    lv.sprites = []; selSprite = -1; updateProps();
+    lv.sprites = []; clearSpriteSelection(); updateProps();
     markDirty(); redraw();
     setStatus(`cleared all sprites on ${curMap}`);
   });
@@ -1754,19 +2121,74 @@ if (typeof document !== "undefined") (function initUI() {
     URL.revokeObjectURL(a.href);
   }
 
-  $("saveBtn").addEventListener("click", () => {
+  async function writeFileHandle(handle, bytes) {
+    const writable = await handle.createWritable();
     try {
+      await writable.write(bytes);
+      await writable.close();
+    } catch (err) {
+      if (typeof writable.abort === "function") await writable.abort().catch(() => {});
+      throw err;
+    }
+  }
+
+  async function ensureBackup(file) {
+    const backupName = `${file.diskName || file.filename}.bak`;
+    try {
+      await directoryHandle.getFileHandle(backupName);
+      return false;                                   // never overwrite the first backup
+    } catch (err) {
+      if (err.name !== "NotFoundError") throw err;
+    }
+    const backup = await directoryHandle.getFileHandle(backupName, { create: true });
+    await writeFileHandle(backup, file.originalBytes);
+    return true;
+  }
+
+  async function writeDirectoryOutputs(outputs) {
+    if (!await verifyDirectoryPermission(directoryHandle, true))
+      throw new Error("folder write permission was not granted");
+    for (const output of outputs) await ensureBackup(output.file);
+    const written = [];
+    try {
+      for (const output of outputs) {
+        const target = await directoryHandle.getFileHandle(output.file.diskName || output.file.filename);
+        await writeFileHandle(target, output.bytes);
+        written.push(output.file.filename);
+      }
+    } catch (err) {
+      const detail = written.length ? ` ${written.join(", ")} was already written; restore its .bak if needed.` : "";
+      throw new Error(`folder save stopped: ${err.message}.${detail}`);
+    }
+  }
+
+  $("saveBtn").addEventListener("click", async () => {
+    $("saveBtn").disabled = true;
+    try {
+      if (directoryHandle && !directorySaveConfirmed) {
+        const ok = confirm("Save directly into the selected game folder?\n\n" +
+          "The editor will create FILE000n.GLB.bak before each archive's first write " +
+          "and will never overwrite that backup. Downloads remain available by loading files normally.");
+        if (!ok) { setStatus("direct save cancelled; no files were changed"); return; }
+        directorySaveConfirmed = true;
+      }
       for (const name of dirty) commit(name);
       for (const bank of dirtyLibs) commitLib(bank);
       for (const bank of dirtyFlats) commitFlats(bank);
       let nums = affectedFiles();
       if (!nums.length) nums = [mapIndex.find(m => m.name === curMap).filenum];
-      nums.forEach((n, i) => setTimeout(() =>
-        download(buildGlb(files.get(n).glb), files.get(n).filename), i * 400));
+      const outputs = nums.map(n => ({ file: files.get(n), bytes: buildGlb(files.get(n).glb) }));
+      if (directoryHandle) await writeDirectoryOutputs(outputs);
+      else outputs.forEach((output, i) => setTimeout(() =>
+        download(output.bytes, output.file.filename), i * 400));
       dirty.clear(); dirtyLibs.clear(); dirtyFlats.clear(); dirtyMusicSlots.clear();
       updateSaveBtn();
-      setStatus(`saved ${nums.map(n => files.get(n).filename).join(", ")} - back up originals before overwriting!`);
+      if (directoryHandle) await persistSession(); else scheduleSessionSave();
+      setStatus(directoryHandle
+        ? `saved ${nums.map(n => files.get(n).filename).join(", ")} directly; first-save backups preserved`
+        : `downloaded ${nums.map(n => files.get(n).filename).join(", ")} - back up originals before overwriting!`);
     } catch (err) { setStatus(`save failed: ${err.message}`); }
+    finally { $("saveBtn").disabled = !mapIndex.length; }
   });
 
   $("jsonExportBtn").addEventListener("click", () => {
@@ -1795,6 +2217,7 @@ if (typeof document !== "undefined") (function initUI() {
       pushUndo(target);
       levels.set(target, imported);
       dirty.add(target);
+      scheduleSessionSave();
       openMap(target);
       setStatus(`imported ${f.name} into ${target}`);
     } catch (err) { setStatus(`import failed: ${err.message}`); }
@@ -1818,6 +2241,9 @@ if (typeof document !== "undefined") (function initUI() {
   window.addEventListener("beforeunload", e => {
     if (dirty.size || dirtyLibs.size || dirtyFlats.size || dirtyMusicSlots.size) e.preventDefault();
   });
+  window.addEventListener("pagehide", persistSession);
+  offerStoredSession();
+  configureFolderAccess();
 
 })();
 </script>

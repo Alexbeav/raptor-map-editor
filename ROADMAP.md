@@ -93,6 +93,10 @@ flats banks, sprite graphic, and one valid map.
 
 ## Phase 2 — designer workflow
 
+**Status (2026-07-15): implemented.** Multi-select/clipboard, versioned session
+recovery, and guarded folder-backed saves pass synthetic Playwright tests
+locally; the first hosted Phase 2 CI run is pending.
+
 Community quick win already implemented: the placement and Library lists can
 group enemy variants by their shared `iname` graphic without reordering the
 underlying positional library.
@@ -171,6 +175,13 @@ unsupported browsers still get downloads.
 The point: share author-created changes **without copying the user's base game
 data**. A `.rapmod` JSON file is a base-hashed patch, not a dump of complete
 maps or libraries:
+
+Classic IPS can remain a later interoperability option, but it is not the
+primary sharing format: it patches raw offsets, does not identify the expected
+base archive, and would need separate files for every touched GLB. `.rapmod`
+can validate base item hashes, describe editor-level changes, preview them, and
+apply several archives transactionally. This is a technical distribution
+design, not a claim about the legal status of any particular mod.
 
 ```
 { "format": "rapmod", "version": 1,

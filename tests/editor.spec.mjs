@@ -29,6 +29,15 @@ function gpic(width, height, color) {
   return out;
 }
 
+function mus(channels) {
+  const data = new Uint8Array(17);
+  data.set([0x4D, 0x55, 0x53, 0x1A]);
+  const dv = new DataView(data.buffer);
+  dv.setUint16(4, 1, true); dv.setUint16(6, 16, true); dv.setUint16(8, channels, true);
+  data[16] = 0x60;
+  return data;
+}
+
 function spriteRecord(hits = 1) {
   const fields = ["item", "bonus", "exptype", "shotspace", "ground", "suck", "frame_rate",
     "num_frames", "countdown", "rewind", "animtype", "shadow", "bossflag", "hits", "money",
@@ -65,7 +74,9 @@ function fixture() {
       { linkflat: 0, bonus: 0, bounty: 0 },
       { linkflat: 0, bonus: 10, bounty: 25 },
     ]) },
-    { flags: 0, name: "TESTG1_PIC", data: gpic(12, 12, 20) },
+    { flags: 0, name: "TESTG1_PIC", data: gpic(32, 32, 20) },
+    { flags: 0, name: "RAP8_MUS", data: mus(0) },
+    { flags: 0, name: "RAP2_MUS", data: mus(1) },
     { flags: 0, name: "MAP1G1_MAP", data: core.buildMap(map) },
   ] });
   return { core, bytes };
@@ -93,6 +104,77 @@ async function clickMapCell(page, col, row) {
     canvas.dispatchEvent(event);
     window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
   }, { col, row });
+}
+
+async function dragMap(page, from, to, shiftKey = false) {
+  await page.locator("#map").evaluate((canvas, gesture) => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = rect.width / canvas.width, sy = rect.height / canvas.height;
+    const point = cell => ({
+      clientX: rect.left + (cell.col * 32 + 16) * sx,
+      clientY: rect.top + (cell.row * 32 + 16) * sy,
+    });
+    canvas.dispatchEvent(new MouseEvent("mousedown", {
+      ...point(gesture.from), bubbles: true, button: 0, shiftKey: gesture.shiftKey,
+    }));
+    canvas.dispatchEvent(new MouseEvent("mousemove", {
+      ...point(gesture.to), bubbles: true, button: 0, shiftKey: gesture.shiftKey,
+    }));
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+  }, { from, to, shiftKey });
+}
+
+async function moveMapPointer(page, col, row) {
+  await page.locator("#map").evaluate((canvas, cell) => {
+    const rect = canvas.getBoundingClientRect(), sx = rect.width / canvas.width, sy = rect.height / canvas.height;
+    canvas.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      clientX: rect.left + (cell.col * 32 + 16) * sx,
+      clientY: rect.top + (cell.row * 32 + 16) * sy,
+    }));
+  }, { col, row });
+}
+
+async function mockDirectory(page, entries, options = {}) {
+  await page.addInitScript(config => {
+    class MemoryFileHandle {
+      constructor(name, data, failWrite) {
+        this.kind = "file"; this.name = name; this.bytes = Uint8Array.from(data); this.failWrite = failWrite;
+      }
+      async getFile() { return new File([this.bytes], this.name); }
+      async createWritable() {
+        let pending = this.bytes;
+        return {
+          write: async data => {
+            if (this.failWrite) throw new Error("simulated disk write failure");
+            if (data instanceof Blob) data = await data.arrayBuffer();
+            pending = new Uint8Array(data instanceof ArrayBuffer ? data :
+              data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+          },
+          close: async () => { this.bytes = pending; },
+          abort: async () => {},
+        };
+      }
+    }
+    class MemoryDirectoryHandle {
+      constructor() {
+        this.kind = "directory";
+        this.files = new Map(config.entries.map(([name, data]) =>
+          [name, new MemoryFileHandle(name, data, config.options.failWrite === name)]));
+      }
+      async *entries() { for (const entry of this.files) yield entry; }
+      async queryPermission() { return config.options.permission || "granted"; }
+      async requestPermission() { return config.options.permission || "granted"; }
+      async getFileHandle(name, createOptions = {}) {
+        if (this.files.has(name)) return this.files.get(name);
+        if (!createOptions.create) throw new DOMException("not found", "NotFoundError");
+        const handle = new MemoryFileHandle(name, [], false); this.files.set(name, handle); return handle;
+      }
+    }
+    const directory = new MemoryDirectoryHandle();
+    window.__testDirectory = directory;
+    Object.defineProperty(window, "showDirectoryPicker", { configurable: true, value: async () => directory });
+  }, { entries: Object.entries(entries).map(([name, data]) => [name, Array.from(data)]), options });
 }
 
 test("load, warn, edit, undo/redo, and save a synthetic GLB", async ({ page }) => {
@@ -130,6 +212,19 @@ test("load, warn, edit, undo/redo, and save a synthetic GLB", async ({ page }) =
   await page.locator("#spriteList div[data-i='0']").click();
   await page.locator("#placeBtn").click();
   await clickMapCell(page, 3, 130);
+  await page.keyboard.press("Escape");
+  await dragMap(page, { col: 0, row: 95 }, { col: 4, row: 135 }, true);
+  await expect(page.locator("#selectionInfo")).toContainText("2 sprites selected");
+  await dragMap(page, { col: 1, row: 100 }, { col: 2, row: 100 });
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowRight");
+  await moveMapPointer(page, 4, 135);
+  await page.locator("#propLevel").selectOption("3");
+  await page.locator("#copyBtn").click();
+  await page.locator("#pasteBtn").click();
+  await expect(page.locator("#selectionInfo")).toContainText("2 sprites selected");
+  await page.locator("#delBtn").click();
+  await page.locator("#undoBtn").click();
 
   await page.locator("#tabLib").click();
   await page.locator("#groupLibChk").check();
@@ -142,6 +237,21 @@ test("load, warn, edit, undo/redo, and save a synthetic GLB", async ({ page }) =
   await expect(hits).toHaveValue("1");
   await page.locator("#redoBtn").click();
   await expect(hits).toHaveValue("40");
+  await page.locator("#tabMusic").click();
+  await page.locator("#musicSelect").selectOption("RAP2_MUS");
+
+  await page.waitForTimeout(500);
+  page.once("dialog", dialog => dialog.accept());
+  await page.reload();
+  await expect(page.locator("#restoreSessionBtn")).toBeVisible();
+  await page.locator("#restoreSessionBtn").click();
+  await expect(page.locator("#drop")).toBeHidden();
+  await expect(page.locator("#saveBtn")).toContainText("edited");
+  await page.locator("#tabLib").click();
+  await page.locator("#libList div[data-i='0']").click();
+  await expect(hits).toHaveValue("40");
+  await page.locator("#tabMusic").click();
+  await expect(page.locator("#musicSelect")).toHaveValue("RAP2_MUS");
 
   const downloadPromise = page.waitForEvent("download");
   await page.locator("#saveBtn").click();
@@ -155,7 +265,105 @@ test("load, warn, edit, undo/redo, and save a synthetic GLB", async ({ page }) =
   const editedLib = core.parseSpriteLib(byName("SPRITE1_ITM"));
 
   expect(editedMap.tiles[138][2].flats).toBe(1);
-  expect(editedMap.sprites.some(s => s.x === 3 && s.y === 130 && s.slib === 0)).toBeTruthy();
+  expect(editedMap.sprites).toHaveLength(4);
+  expect(editedMap.sprites.filter(s => s.x === 2 && s.level === 3)).toHaveLength(2);
+  expect(editedMap.sprites.filter(s => s.x === 4 && s.level === 3)).toHaveLength(2);
+  expect(editedMap.sprites.some(s => s.y === 109)).toBeTruthy();
+  expect(editedMap.sprites.some(s => s.y === 139)).toBeTruthy();
+  expect(editedMap.sprites.every(s => s.link === 1)).toBeTruthy();
   expect(editedFlats[1].bonus).toBe(30);
   expect(editedLib[0].hits).toBe(40);
+  expect(new DataView(byName("RAP8_MUS").buffer, byName("RAP8_MUS").byteOffset).getUint16(8, true)).toBe(1);
+});
+
+test("starting fresh removes the saved recovery session", async ({ page }) => {
+  const { bytes } = fixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+  await page.locator("#tabTiles").click();
+  await page.locator("#tileGridCanvas").click({ position: { x: 51, y: 17 } });
+  await clickMapCell(page, 2, 138);
+  await page.waitForTimeout(500);
+  page.once("dialog", dialog => dialog.accept());
+  await page.reload();
+  await expect(page.locator("#freshSessionBtn")).toBeVisible();
+  await page.locator("#freshSessionBtn").click();
+  await expect(page.locator("#recovery")).toBeHidden();
+  await page.reload();
+  await expect(page.locator("#recovery")).toBeHidden();
+});
+
+test("folder save writes patched archives and preserves the first backup", async ({ page }) => {
+  const { core, bytes } = fixture();
+  await mockDirectory(page, { "FILE0001.GLB": bytes });
+
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await expect(page.locator("#openDropFolderBtn")).toBeVisible();
+  await page.locator("#openDropFolderBtn").click();
+  await expect(page.locator("#drop")).toBeHidden();
+  await page.locator("#tileGridCanvas").click({ position: { x: 51, y: 17 } });
+  await clickMapCell(page, 2, 138);
+  page.once("dialog", dialog => dialog.dismiss());
+  await page.locator("#saveBtn").click();
+  await expect(page.locator("#status")).toContainText("direct save cancelled");
+  expect(await page.evaluate(() =>
+    Array.from(window.__testDirectory.files.get("FILE0001.GLB").bytes))).toEqual(Array.from(bytes));
+  expect(await page.evaluate(() =>
+    window.__testDirectory.files.has("FILE0001.GLB.bak"))).toBeFalsy();
+  page.once("dialog", dialog => dialog.accept());
+  await page.locator("#saveBtn").click();
+  await expect(page.locator("#status")).toContainText("saved FILE0001.GLB directly");
+
+  const output = await page.evaluate(() => ({
+    saved: Array.from(window.__testDirectory.files.get("FILE0001.GLB").bytes),
+    backup: Array.from(window.__testDirectory.files.get("FILE0001.GLB.bak").bytes),
+  }));
+  expect(Uint8Array.from(output.backup)).toEqual(bytes);
+  const saved = Uint8Array.from(output.saved);
+  const glb = core.parseGlb(saved.buffer);
+  const map = core.parseMap(glb.items.find(item => item.name === "MAP1G1_MAP").data);
+  expect(map.tiles[138][2].flats).toBe(1);
+
+  await page.locator("#tileGridCanvas").click({ position: { x: 17, y: 17 } });
+  await clickMapCell(page, 2, 138);
+  await page.locator("#saveBtn").click();
+  await expect.poll(() => page.evaluate(() =>
+    Array.from(window.__testDirectory.files.get("FILE0001.GLB.bak").bytes))).toEqual(Array.from(bytes));
+});
+
+test("folder open reports denied permission without replacing the session", async ({ page }) => {
+  const { bytes } = fixture();
+  await mockDirectory(page, { "FILE0001.GLB": bytes }, { permission: "denied" });
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await page.locator("#openDropFolderBtn").click();
+  await expect(page.locator("#status")).toContainText("folder permission was not granted");
+  await expect(page.locator("#drop")).toBeVisible();
+});
+
+test("partial folder failure preserves all backups and reports written archives", async ({ page }) => {
+  const { core, bytes } = fixture();
+  const secondGlb = core.parseGlb(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  secondGlb.items.find(item => item.name === "MAP1G1_MAP").name = "MAP1G2_MAP";
+  const secondBytes = core.buildGlb(secondGlb);
+  await mockDirectory(page, {
+    "FILE0001.GLB": bytes,
+    "FILE0002.GLB": secondBytes,
+  }, { failWrite: "FILE0002.GLB" });
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await page.locator("#openDropFolderBtn").click();
+  await expect(page.locator("#drop")).toBeHidden();
+  await page.locator("#tileGridCanvas").click({ position: { x: 51, y: 17 } });
+  await clickMapCell(page, 2, 138);
+  await page.locator("#mapSelect").selectOption("MAP1G2_MAP");
+  await clickMapCell(page, 3, 137);
+  page.once("dialog", dialog => dialog.accept());
+  await page.locator("#saveBtn").click();
+  await expect(page.locator("#status")).toContainText("folder save stopped");
+  await expect(page.locator("#status")).toContainText("FILE0001.GLB was already written");
+  const state = await page.evaluate(() => Object.fromEntries(
+    [...window.__testDirectory.files].map(([name, handle]) => [name, Array.from(handle.bytes)])));
+  expect(state["FILE0001.GLB.bak"]).toEqual(Array.from(bytes));
+  expect(state["FILE0002.GLB.bak"]).toEqual(Array.from(secondBytes));
+  expect(state["FILE0002.GLB"]).toEqual(Array.from(secondBytes));
+  expect(state["FILE0001.GLB"]).not.toEqual(Array.from(bytes));
 });

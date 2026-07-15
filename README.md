@@ -23,6 +23,14 @@ never modified (saving downloads patched copies).
   enemy-library bank, with buttons plus Ctrl+Z, Ctrl+Y, and Ctrl+Shift+Z.
 - **Find enemy variants quickly** — optionally group placement and library
   entries by their shared graphic without changing their engine-facing indices.
+- **Edit groups efficiently** — rectangle-select enemies, move or change their
+  difficulty together, and copy complete spawn groups across maps and banks.
+- **Recover interrupted work** — versioned local IndexedDB autosave restores
+  maps, libraries, destructible tiles, music, undo history, and dirty state.
+- **Work directly in the game folder where supported** — Chromium browsers on
+  a secure origin can open and save the GLBs in place while preserving an
+  immutable first-save `.bak`. The first direct write requires confirmation;
+  downloads remain the default and universal fallback.
 - **Change soundtrack slots** — choose another built-in track or import a DMX
   `.MUS` file (convert MIDI files with
   [midi3mus](https://github.com/skynettx/midi3mus/releases) first).
@@ -47,7 +55,9 @@ never modified (saving downloads patched copies).
    (v1.2+ data; the shareware's `FILE0000`+`FILE0001` also works).
 3. Pick a map. The **?** button covers the rest.
 4. **Download GLB** saves patched copies. Back up your originals, drop the
-   patched files into your game folder, and play.
+   patched files into your game folder, and play. Where the browser exposes
+   folder access, **Open game folder…** can save directly after creating
+   first-save `.bak` files.
 
 **Which game version?** The classic 1994 game and the *2015 Edition* ship
 the same `file0000`–`file0004.glb` (SHA-256 identical), so the editor reads
