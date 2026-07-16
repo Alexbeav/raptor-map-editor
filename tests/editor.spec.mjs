@@ -659,3 +659,26 @@ test("library panel scrolls on short screens instead of clipping", async ({ page
   await page.locator("#tabSprites").click();
   expect((await spriteList.boundingBox()).height).toBeGreaterThanOrEqual(120);
 });
+
+test("sidebar resizes by dragging and persists across reloads", async ({ page }) => {
+  const { bytes } = fixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+
+  const asideWidth = async () => (await page.locator("aside").boundingBox()).width;
+  expect(await asideWidth()).toBeLessThan(300);
+
+  const grip = await page.locator("#sidebarResizer").boundingBox();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(grip.x + 210, grip.y + 200);
+  await page.mouse.up();
+  expect(await asideWidth()).toBeGreaterThan(450);
+
+  await page.reload();
+  expect(await asideWidth()).toBeGreaterThan(450);
+
+  await dropFixture(page, bytes);
+  await page.locator("#sidebarResizer").dblclick();
+  expect(await asideWidth()).toBeLessThan(300);
+});

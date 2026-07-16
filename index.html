@@ -39,8 +39,10 @@
   #main { flex: 1; display: flex; min-height: 0; }
   aside {
     width: 292px; background: var(--panel); border-right: 1px solid var(--line);
-    display: flex; flex-direction: column; min-height: 0;
+    display: flex; flex-direction: column; min-height: 0; flex: 0 0 auto;
   }
+  #sidebarResizer { flex: 0 0 6px; cursor: col-resize; touch-action: none; margin-left: -3px; }
+  #sidebarResizer:hover, #sidebarResizer.dragging { background: var(--accent); }
   .tabs { display: flex; }
   .tabs button {
     flex: 1; border-radius: 0; border: none; border-bottom: 2px solid transparent;
@@ -265,6 +267,7 @@
         Standard MIDI format 0/1 files are converted locally to DMX MUS; native .MUS files are accepted directly.</div>
     </div>
   </aside>
+  <div id="sidebarResizer" title="drag to resize the sidebar &middot; double-click to reset"></div>
   <div id="wrap"><canvas id="map" width="288" height="4800"></canvas></div>
 </div>
 
@@ -296,7 +299,8 @@
   <p>Load the game's <b>FILE0000.GLB&ndash;FILE0004.GLB</b> (shareware needs only 0000+0001).
   Pick a map &mdash; it opens scrolled to the bottom, which is where the level starts in-game.
   Nothing is ever uploaded, and your original files are never modified: saving downloads
-  <i>patched copies</i>.</p>
+  <i>patched copies</i>. The sidebar scrolls when it doesn't fit on screen, and you can
+  <b>drag its right edge</b> to resize it (double-click the edge to reset).</p>
   <h3>Tiles tab</h3>
   <p>Pick a tileset bank and a tile, then click/drag on the map to paint.
   <b>Right-click the map</b> to eyedrop any tile. A red dot in the picker marks
@@ -2703,6 +2707,31 @@ if (typeof document !== "undefined") (function initUI() {
   $("tabSprites").addEventListener("click", () => switchTab("sprites"));
   $("tabLib").addEventListener("click", () => switchTab("library"));
   $("tabMusic").addEventListener("click", () => switchTab("music"));
+
+  {
+    const aside = document.querySelector("aside"), resizer = $("sidebarResizer");
+    const applySidebarWidth = w => {
+      const max = Math.max(240, window.innerWidth * 0.6);
+      aside.style.width = Math.round(Math.min(Math.max(w, 240), max)) + "px";
+    };
+    const saved = +localStorage.getItem("sidebarWidth");
+    if (saved) applySidebarWidth(saved);
+    resizer.addEventListener("pointerdown", e => {
+      e.preventDefault(); resizer.setPointerCapture(e.pointerId); resizer.classList.add("dragging");
+    });
+    resizer.addEventListener("pointermove", e => {
+      if (!resizer.hasPointerCapture(e.pointerId)) return;
+      applySidebarWidth(e.clientX - aside.getBoundingClientRect().left);
+    });
+    resizer.addEventListener("pointerup", e => {
+      if (!resizer.hasPointerCapture(e.pointerId)) return;
+      resizer.releasePointerCapture(e.pointerId); resizer.classList.remove("dragging");
+      localStorage.setItem("sidebarWidth", parseInt(aside.style.width, 10) || 292);
+    });
+    resizer.addEventListener("dblclick", () => {
+      aside.style.width = ""; localStorage.removeItem("sidebarWidth");
+    });
+  }
 
   $("mapSelect").addEventListener("change", () => openMap($("mapSelect").value));
   $("zoomSelect").addEventListener("change", () => { zoom = +$("zoomSelect").value; redraw(); });
