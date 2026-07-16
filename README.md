@@ -9,6 +9,8 @@ browser, drop in your own game data files, and edit. Nothing is uploaded
 anywhere — everything runs locally in the tab, and your original files are
 never modified (saving downloads patched copies).
 
+![The editor running in a browser: enemy library and visual flight-path editor on the left, a level map with labeled enemy placements on the right](screenshot.jpg)
+
 ## What it does
 
 - **Edit all 27 levels** — paint tiles (with destructible-tile markers and a
