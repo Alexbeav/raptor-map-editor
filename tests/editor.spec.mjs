@@ -686,3 +686,17 @@ test("sidebar resizes by dragging and persists across reloads", async ({ page })
   expect(await asideWidth()).toBeLessThan(300);
   expect(await tileCols()).toBe(8);
 });
+
+test("zoom choice survives a refresh and matches the dropdown", async ({ page }) => {
+  const { bytes } = fixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+
+  await page.locator("#zoomSelect").selectOption("3");
+  await expect(page.locator("#map")).toHaveCSS("width", "864px");
+
+  await page.reload();
+  await dropFixture(page, bytes);
+  await expect(page.locator("#zoomSelect")).toHaveValue("3");
+  await expect(page.locator("#map")).toHaveCSS("width", "864px");
+});

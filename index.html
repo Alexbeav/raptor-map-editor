@@ -130,7 +130,7 @@
   <button id="openFolderBtn" hidden>Open game folder&hellip;</button>
   <button id="reloadFolderBtn" hidden>Reload game folder</button>
   <select id="mapSelect" disabled></select>
-  <select id="zoomSelect"><option value="1">1&times;</option><option value="2" selected>2&times;</option><option value="3">3&times;</option></select>
+  <select id="zoomSelect" autocomplete="off"><option value="1">1&times;</option><option value="2" selected>2&times;</option><option value="3">3&times;</option></select>
   <label><input type="checkbox" id="labelsChk" checked> labels</label>
   <label><input type="checkbox" id="spritesChk" checked> sprites</label>
   <button id="undoBtn" disabled>Undo</button>
@@ -2741,7 +2741,18 @@ if (typeof document !== "undefined") (function initUI() {
   }
 
   $("mapSelect").addEventListener("change", () => openMap($("mapSelect").value));
-  $("zoomSelect").addEventListener("change", () => { zoom = +$("zoomSelect").value; redraw(); });
+  {
+    const savedZoom = +localStorage.getItem("zoom");
+    if (savedZoom >= 1 && savedZoom <= 3) zoom = savedZoom;
+    const syncZoomSelect = () => { $("zoomSelect").value = zoom; };
+    syncZoomSelect();
+    // browsers restore form state on refresh without firing "change";
+    // pageshow fires after that, so the dropdown always matches the real zoom
+    window.addEventListener("pageshow", syncZoomSelect);
+    $("zoomSelect").addEventListener("change", () => {
+      zoom = +$("zoomSelect").value; localStorage.setItem("zoom", zoom); redraw();
+    });
+  }
   $("labelsChk").addEventListener("change", redraw);
   $("spritesChk").addEventListener("change", redraw);
 
