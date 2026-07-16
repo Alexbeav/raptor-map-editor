@@ -675,10 +675,14 @@ test("sidebar resizes by dragging and persists across reloads", async ({ page })
   await page.mouse.up();
   expect(await asideWidth()).toBeGreaterThan(450);
 
+  const tileCols = async () => +await page.locator("#tileGridCanvas").getAttribute("data-cols");
+  expect(await tileCols()).toBeGreaterThan(8);
+
   await page.reload();
   expect(await asideWidth()).toBeGreaterThan(450);
 
   await dropFixture(page, bytes);
   await page.locator("#sidebarResizer").dblclick();
   expect(await asideWidth()).toBeLessThan(300);
+  expect(await tileCols()).toBe(8);
 });

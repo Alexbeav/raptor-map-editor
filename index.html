@@ -55,7 +55,7 @@
   .row .grow { flex: 1; }
   .scroll { overflow: auto; border: 1px solid var(--line); background: #000; }
   #tileGrid { flex: 1; min-height: 120px; }
-  #tileGridCanvas { display: block; image-rendering: pixelated; cursor: pointer; }
+  #tileGridCanvas { display: block; image-rendering: pixelated; cursor: pointer; width: 100%; }
   #tileSel { display: flex; gap: 8px; align-items: center; }
   #tileSelCanvas { width: 64px; height: 64px; image-rendering: pixelated;
     border: 1px solid var(--line); background: #000; }
@@ -1758,7 +1758,9 @@ if (typeof document !== "undefined") (function initUI() {
   }
 
   // ---- tile picker ---------------------------------------------------------
-  const GRID_COLS = 8;
+  // columns follow the sidebar width (8 at the default 292px width)
+  const tileGridCols = () =>
+    Math.max(4, Math.round(($("tileGrid").clientWidth || 256) / TILE));
   function drawTileGrid() {
     const bank = +$("tileBank").value;
     const start = bankData(tilesetStart, bank);
@@ -1768,14 +1770,15 @@ if (typeof document !== "undefined") (function initUI() {
     // count tiles: up to the ENDGnTILES label
     const endId = itemId(`ENDG${bank + 1}TILES`);
     const n = (endId & 0xFFFF) - (start & 0xFFFF);
-    gc.width = GRID_COLS * TILE;
-    gc.height = Math.ceil(n / GRID_COLS) * TILE;
-    gc.style.width = gc.width * 1.06 + "px"; // slight upscale to fill panel
+    const cols = tileGridCols();
+    gc.width = cols * TILE;
+    gc.height = Math.ceil(n / cols) * TILE;
+    gc.dataset.cols = cols;
     const g = gc.getContext("2d");
     g.fillStyle = "#111"; g.fillRect(0, 0, gc.width, gc.height);
     for (let i = 0; i < n; i++) {
       const p = pic(start + i);
-      const x = (i % GRID_COLS) * TILE, y = Math.floor(i / GRID_COLS) * TILE;
+      const x = (i % cols) * TILE, y = Math.floor(i / cols) * TILE;
       if (p) g.drawImage(p, x, y);
       if (flats[i] && flats[i].linkflat !== i) {         // destructible marker
         g.fillStyle = "#ff5050"; g.fillRect(x + 26, y + 2, 4, 4);
@@ -1837,7 +1840,7 @@ if (typeof document !== "undefined") (function initUI() {
     const scale = e.target.width / r.width;
     const c = Math.floor((e.clientX - r.left) * scale / TILE);
     const row = Math.floor((e.clientY - r.top) * scale / TILE);
-    const i = row * GRID_COLS + c;
+    const i = row * (+e.target.dataset.cols || 8) + c;
     if (i < +e.target.dataset.count) selectTile(+$("tileBank").value, i);
   });
   $("tileBank").addEventListener("change", drawTileGrid);
@@ -2699,6 +2702,7 @@ if (typeof document !== "undefined") (function initUI() {
       $(panel).classList.toggle("active", m === key);
     }
     placing = false; $("placeBtn").textContent = "Place mode";
+    if (m === "tiles") drawTileGrid();
     if (m === "library") { drawLibList(); if (libSel >= 0) drawPath(); }
     if (m === "music") updateMusicPanel();
     updateUndoBtn();
@@ -2713,6 +2717,8 @@ if (typeof document !== "undefined") (function initUI() {
     const applySidebarWidth = w => {
       const max = Math.max(240, window.innerWidth * 0.6);
       aside.style.width = Math.round(Math.min(Math.max(w, 240), max)) + "px";
+      if (mode === "tiles" && +$("tileGridCanvas").dataset.cols !== tileGridCols())
+        drawTileGrid();
     };
     const saved = +localStorage.getItem("sidebarWidth");
     if (saved) applySidebarWidth(saved);
@@ -2730,6 +2736,7 @@ if (typeof document !== "undefined") (function initUI() {
     });
     resizer.addEventListener("dblclick", () => {
       aside.style.width = ""; localStorage.removeItem("sidebarWidth");
+      if (mode === "tiles") drawTileGrid();
     });
   }
 
