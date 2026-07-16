@@ -634,3 +634,28 @@ test("MIDI imports convert locally to a valid shared-slot MUS", async ({ page })
   const info = core.validateMus(converted);
   expect(info.channels).toBe(1); expect(info.patches).toEqual([5]);
 });
+
+test("library panel scrolls on short screens instead of clipping", async ({ page }) => {
+  const { bytes } = fixture();
+  await page.setViewportSize({ width: 1366, height: 625 });
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+  await page.locator("#tabLib").click();
+  await page.locator("#libList div[data-i='0']").click();
+  await expect(page.locator("#artImportBox")).toBeAttached();
+
+  const applyBtn = page.locator("#artApplyBtn");
+  const before = await applyBtn.boundingBox();
+  expect(before.y + before.height).toBeGreaterThan(625);
+
+  const panel = page.locator("#panelLib");
+  expect(await panel.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+  await applyBtn.scrollIntoViewIfNeeded();
+  const after = await applyBtn.boundingBox();
+  expect(after.y).toBeGreaterThanOrEqual(0);
+  expect(after.y + after.height).toBeLessThanOrEqual(625);
+
+  const spriteList = page.locator("#spriteList");
+  await page.locator("#tabSprites").click();
+  expect((await spriteList.boundingBox()).height).toBeGreaterThanOrEqual(120);
+});

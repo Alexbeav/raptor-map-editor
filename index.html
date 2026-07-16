@@ -47,12 +47,12 @@
     background: var(--panel); padding: 8px;
   }
   .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
-  .panel { flex: 1; display: none; flex-direction: column; min-height: 0; padding: 10px; gap: 8px; }
+  .panel { flex: 1; display: none; flex-direction: column; min-height: 0; padding: 10px; gap: 8px; overflow-y: auto; }
   .panel.active { display: flex; }
   .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .row .grow { flex: 1; }
   .scroll { overflow: auto; border: 1px solid var(--line); background: #000; }
-  #tileGrid { flex: 1; }
+  #tileGrid { flex: 1; min-height: 120px; }
   #tileGridCanvas { display: block; image-rendering: pixelated; cursor: pointer; }
   #tileSel { display: flex; gap: 8px; align-items: center; }
   #tileSelCanvas { width: 64px; height: 64px; image-rendering: pixelated;
@@ -60,6 +60,7 @@
   .hint { color: var(--dim); font-size: 12px; }
   .warning { color: #ffd228; }
   #spriteList, #libList { flex: 1; overflow: auto; border: 1px solid var(--line); background: var(--panel2); }
+  #spriteList { min-height: 120px; }
   #spriteList div, #libList div { padding: 3px 8px; cursor: pointer; display: flex; gap: 6px;
     font-family: Consolas, monospace; font-size: 12px; white-space: nowrap; }
   #spriteList div:hover, #libList div:hover { background: #2e3542; }
