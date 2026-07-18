@@ -3351,10 +3351,13 @@ if (typeof document !== "undefined") (function initUI() {
 
   function download(bytes, filename) {
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    a.href = url;
     a.download = filename;
     a.click();
-    URL.revokeObjectURL(a.href);
+    // Firefox can cancel a download when its object URL is revoked in the
+    // same task as the synthetic click.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   async function writeFileHandle(handle, bytes) {
@@ -3441,8 +3444,11 @@ if (typeof document !== "undefined") (function initUI() {
     const f = e.target.files[0];
     if (!f) return;
     try {
+      if (f.size > 10 * 1024 * 1024) throw new Error("JSON map is larger than the 10 MiB safety limit");
       const m = JSON.parse(await f.text());
-      const target = (m.name && mapIndex.some(x => x.name === m.name)) ? m.name : curMap;
+      if (m.name !== undefined && (typeof m.name !== "string" || !mapIndex.some(x => x.name === m.name)))
+        throw new Error(`map ${String(m.name)} is not present in the loaded archives`);
+      const target = m.name || curMap;
       const imported = { rows: MAP_ROWS, cols: MAP_COLS, tiles: m.tiles,
         sprites: Array.isArray(m.sprites) ? m.sprites.map(({ level_name, ...s }) => s) : m.sprites };
       validateMapAssets(imported);

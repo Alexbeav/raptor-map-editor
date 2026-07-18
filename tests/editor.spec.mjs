@@ -309,6 +309,24 @@ test("load, warn, edit, undo/redo, and save a synthetic GLB", async ({ page }) =
   expect(new DataView(byName("RAP8_MUS").buffer, byName("RAP8_MUS").byteOffset).getUint16(8, true)).toBe(1);
 });
 
+test("JSON import rejects an unknown named map instead of overwriting the current map", async ({ page }) => {
+  const { core, bytes } = fixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+
+  const glb = core.parseGlb(bytes);
+  const map = core.parseMap(glb.items.find(item => item.name === "MAP1G1_MAP").data);
+  await page.locator("#jsonInput").setInputFiles({
+    name: "unknown-map.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify({ name: "MAP9G9_MAP", ...map })),
+  });
+
+  await expect(page.locator("#status")).toContainText("MAP9G9_MAP is not present in the loaded archives");
+  await expect(page.locator("#mapSelect")).toHaveValue("MAP1G1_MAP");
+  await expect(page.locator("#undoBtn")).toBeDisabled();
+});
+
 test("starting fresh removes the saved recovery session", async ({ page }) => {
   const { bytes } = fixture();
   await page.goto(pathToFileURL(join(root, "index.html")).href);
