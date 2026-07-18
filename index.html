@@ -1584,8 +1584,20 @@ if (typeof document !== "undefined") (function initUI() {
     $("modExportBtn").disabled = !mapIndex.length;
     fillBankSelects();
     initializeMusic();
-    $("deltaBtn").style.display = (itemId("MAP1G3_MAP") >= 0 && files.has(4) &&
-      itemId("MAP1G4_MAP") < 0 && itemId("SHIPCOMP_SWD") >= 0) ? "" : "none";
+    {
+      // Visible whenever files are loaded so the button can explain its own
+      // requirements; enabled only when the patch can actually be applied.
+      const deltaInstalled = itemId("MAP1G4_MAP") >= 0;
+      const deltaEligible = itemId("MAP1G3_MAP") >= 0 && files.has(4) &&
+        !deltaInstalled && itemId("SHIPCOMP_SWD") >= 0;
+      $("deltaBtn").style.display = "";
+      $("deltaBtn").disabled = !deltaEligible;
+      $("deltaBtn").title = deltaEligible
+        ? "add nine editable Delta Sector map slots (MAP1G4-MAP9G4): downloads patched FILE0001/FILE0004 - reload the patched GLBs here and the G4 maps appear in the map list"
+        : deltaInstalled
+          ? "Delta Sector is already installed - edit MAP1G4-MAP9G4 from the map list"
+          : "needs FILE0001 and FILE0004 from the registered v1.2+ game loaded";
+    }
     $("drop").classList.add("hide");
     const missing = [1, 2, 3, 4].filter(n => !files.has(n));
     setStatus(`${loaded} loaded, ${mapIndex.length} maps` +
