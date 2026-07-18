@@ -145,8 +145,8 @@ picks them up automatically:
 2. Load your now-patched GLBs here. The nine G4 maps appear in the map list
    next to the original 27.
 3. Edit them like any level — tiles from all three tilesets on one map,
-   enemies from any bank, flight paths, difficulty, and music (Delta shares
-   the sector-3 soundtrack slots).
+   enemies from any bank, flight paths, difficulty, and music (Delta has its
+   own soundtrack slot table in the Enhanced engine).
 4. Save `FILE0004.GLB` back to the game folder, launch `raptor.exe`, and
    press **D** in the hangar's Ship Computer to play your changes.
 5. Share Delta redesigns as `.rapmod` — the Delta installer is deterministic,

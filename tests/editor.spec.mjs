@@ -87,6 +87,7 @@ function fixture(withDelta = false) {
     { flags: 0, name: "TEST2G1_PIC", data: gpic(32, 32, 21) },
     { flags: 0, name: "RAP8_MUS", data: mus(0) },
     { flags: 0, name: "RAP2_MUS", data: mus(1) },
+    { flags: 0, name: "RAP3_MUS", data: mus(1) },
     { flags: 0, name: "MAP1G1_MAP", data: core.buildMap(map) },
     { flags: 0, name: "", data: gpic(2, 2, 31) },
     { flags: 0, name: "", data: gpic(2, 2, 32) },
@@ -827,7 +828,7 @@ test("tile regions copy and paste across maps with undo", async ({ page }) => {
   await expect(page.locator("#tileSelInfo")).toContainText("tile 0");
 });
 
-test("Delta Sector G4 maps share the sector-3 music slot", async ({ page }) => {
+test("Delta Sector G4 maps use their own music table", async ({ page }) => {
   const { bytes } = fixture(true);
   await page.goto(pathToFileURL(join(root, "index.html")).href);
   await dropFixture(page, bytes);
@@ -835,9 +836,12 @@ test("Delta Sector G4 maps share the sector-3 music slot", async ({ page }) => {
 
   await page.locator("#mapSelect").selectOption("MAP1G4_MAP");
   await expect(page.locator("#musicSelect")).toBeEnabled();
-  await expect(page.locator("#musicInfo")).toContainText("RAP8_MUS");
-  await expect(page.locator("#musicInfo")).toContainText("MAP1G1");
+  await expect(page.locator("#musicInfo")).toContainText("RAP3_MUS");
+  await expect(page.locator("#musicInfo")).toContainText("MAP1G2");
 
+  // shared-slot warnings only list Delta maps that are actually loaded:
+  // MAP1G1 shares RAP8_MUS with Delta wave 7, which is absent here
   await page.locator("#mapSelect").selectOption("MAP1G1_MAP");
-  await expect(page.locator("#musicInfo")).toContainText("MAP1G4");
+  await expect(page.locator("#musicInfo")).toContainText("RAP8_MUS");
+  await expect(page.locator("#musicInfo")).not.toContainText("G4");
 });

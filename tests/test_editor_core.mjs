@@ -13,7 +13,7 @@ const core = html.match(/\/\* =+ CORE ==[\s\S]*?\*\/([\s\S]*?)\/\* =+ END CORE/)
 if (!core) throw new Error("CORE block not found in index.html");
 const exports_ = {};
 new Function("exports", core[1] +
-  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, validatePic, quantizeRgba, encodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus, midiToMus, deltaMakeWave, deltaPatchShipcomp});"
+  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, validatePic, quantizeRgba, encodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus, midiToMus, deltaMakeWave, deltaPatchShipcomp, deltaEndTxtItem});"
 )(exports_);
 const { parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats,
   decodePic, validatePic, quantizeRgba, encodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings,
@@ -153,7 +153,7 @@ check("MUS header counts control-only melodic channels", validateMus(midiToMus(p
 // Delta Sector generator parity: the in-browser generator must produce the
 // same patched archives, byte for byte, as tools/install_delta_sector.py.
 {
-  const { deltaMakeWave, deltaPatchShipcomp } = exports_;
+  const { deltaMakeWave, deltaPatchShipcomp, deltaEndTxtItem } = exports_;
 
   const campaignMap = (wave, game) => {
     const tiles = Array.from({ length: 150 }, (_, r) =>
@@ -233,7 +233,8 @@ check("MUS header counts control-only melodic channels", validateMus(midiToMus(p
         };
         const js4 = buildGlb({ items: [...fileItems[4],
           ...Array.from({ length: 9 }, (_, w) =>
-            ({ flags: 0, name: `MAP${w + 1}G4_MAP`, data: deltaMakeWave(byName, w + 1) }))] });
+            ({ flags: 0, name: `MAP${w + 1}G4_MAP`, data: deltaMakeWave(byName, w + 1) })),
+          deltaEndTxtItem()] });
         const js1 = buildGlb({ items: fileItems[1].map(it => it.name === "SHIPCOMP_SWD"
           ? { ...it, data: deltaPatchShipcomp(it.data) } : it) });
         const py1 = new Uint8Array(readFileSync(join(dir, "FILE0001.GLB")));

@@ -1183,6 +1183,23 @@ function deltaMakeWave(byName, wave) {
     sprites: normalizeSpawnOrder(sprites) });
 }
 
+/* Fan-written Delta ending text (END4_TXT), same script format as END1-3_TXT
+   and byte-identical to the Python installer's constant. */
+function deltaEndTxtItem() {
+  const text = "TEXT_POS 30 13 \r\nTEXT_COLOR 84\r\n" +
+    "    The Delta Sector falls silent\r\n" +
+    ["behind you.  Three campaigns' worth",
+     "of defenses, thrown together into",
+     "one last desperate gauntlet - and",
+     "you flew through all of it.  The",
+     "bounty clears before you even dock.",
+     "Somewhere out beyond the charts,",
+     "someone is already hiring for the",
+     "next war.  You'll be ready.",
+    ].map(line => "TEXT_DOWN 5\r\n" + line + "\r\n").join("");
+  return { flags: 1, name: "END4_TXT", data: new TextEncoder().encode(text) };
+}
+
 /* Add a visible DELTA SECTOR row to the ship-computer sector-select window
    (SHIPCOMP_SWD in FILE0001). Returns null if the window is not in the
    expected 12-field layout (e.g. already patched). */
@@ -1255,6 +1272,8 @@ if (typeof document !== "undefined") (function initUI() {
     ["RAP8_MUS", "RAP2_MUS", "RAP4_MUS", "RAP7_MUS", "RAP6_MUS", "RAP2_MUS", "RAP3_MUS", "RAP4_MUS", "RAP6_MUS"],
     ["RAP3_MUS", "RAP2_MUS", "RAP4_MUS", "RAP8_MUS", "RAP6_MUS", "RAP2_MUS", "RAP8_MUS", "RAP1_MUS", "RAP6_MUS"],
     ["RAP8_MUS", "RAP4_MUS", "RAP1_MUS", "RAP7_MUS", "RAP6_MUS", "RAP2_MUS", "RAP3_MUS", "RAP4_MUS", "RAP6_MUS"],
+    // Delta Sector (Raptor Enhanced songsg4): follows each wave's middle band
+    ["RAP3_MUS", "RAP4_MUS", "RAP4_MUS", "RAP7_MUS", "RAP6_MUS", "RAP2_MUS", "RAP8_MUS", "RAP1_MUS", "RAP6_MUS"],
   ];
   const musicSources = new Map();   // source key -> {label, data}; originals stay immutable
   const musicAssignments = new Map(); // hard-coded slot name -> source key
@@ -2804,9 +2823,8 @@ if (typeof document !== "undefined") (function initUI() {
 
   // ---- Music: the engine hard-codes one shared RAPn_MUS slot per level -------
   function musicSlotForMap(name = curMap) {
-    // the Delta Sector engine reuses the sector-3 song table for G4 maps
     const m = /^MAP([1-9])G([1-4])_MAP$/.exec(name || "");
-    return m ? MUSIC_SLOTS[Math.min(+m[2], 3) - 1][+m[1] - 1] : null;
+    return m ? MUSIC_SLOTS[+m[2] - 1][+m[1] - 1] : null;
   }
 
   function mapsForMusicSlot(slot) {
@@ -2814,9 +2832,9 @@ if (typeof document !== "undefined") (function initUI() {
     for (let game = 0; game < MUSIC_SLOTS.length; game++)
       MUSIC_SLOTS[game].forEach((s, wave) => {
         if (s !== slot) return;
+        // Delta maps are listed only when actually present in the session
+        if (game === 3 && !mapIndex.some(m => m.name === `MAP${wave + 1}G4_MAP`)) return;
         names.push(`MAP${wave + 1}G${game + 1}`);
-        if (game === 2 && mapIndex.some(m => m.name === `MAP${wave + 1}G4_MAP`))
-          names.push(`MAP${wave + 1}G4`);
       });
     return names;
   }
@@ -3316,6 +3334,7 @@ if (typeof document !== "undefined") (function initUI() {
       const items4 = files.get(4).glb.items.map(it => ({ ...it }));
       for (let wave = 1; wave <= 9; wave++)
         items4.push({ flags: 0, name: `MAP${wave}G4_MAP`, data: deltaMakeWave(byName, wave) });
+      items4.push(deltaEndTxtItem());
       const glb1 = files.get(1).glb;
       const swdIndex = glb1.items.findIndex(it => it.name === "SHIPCOMP_SWD");
       const patchedSwd = deltaPatchShipcomp(glb1.items[swdIndex].data);

@@ -38,6 +38,22 @@ MAP_COLS, MAP_ROWS = 9, 150
 FLD, H_TXTOFS, H_NUMFLDS, F_Y, F_TXTOFF = 148, 80, 96, 128, 140
 ROWS = {4: 39, 5: 61, 10: 83, 12: 105, 11: 127}     # respaced sector rows
 
+# Fan-written Delta ending text (END4_TXT), same script format as END1-3_TXT.
+DELTA_END_TXT = (
+    "TEXT_POS 30 13 \r\nTEXT_COLOR 84\r\n"
+    "    The Delta Sector falls silent\r\n"
+    + "".join("TEXT_DOWN 5\r\n" + line + "\r\n" for line in (
+        "behind you.  Three campaigns' worth",
+        "of defenses, thrown together into",
+        "one last desperate gauntlet - and",
+        "you flew through all of it.  The",
+        "bounty clears before you even dock.",
+        "Somewhere out beyond the charts,",
+        "someone is already hiring for the",
+        "next war.  You'll be ready.",
+    ))
+).encode("ascii")
+
 
 def base_tile(level):
     c = {}
@@ -158,8 +174,13 @@ def main():
             glb4.items[idx].data = data
         else:
             glb4.items.append(GlbItem(0, name, data))
+    end_idx = glb4.index_of("END4_TXT")
+    if end_idx >= 0:
+        glb4.items[end_idx].data = DELTA_END_TXT
+    else:
+        glb4.items.append(GlbItem(1, "END4_TXT", DELTA_END_TXT))
     path_of(4).write_bytes(glb4.build())
-    print("  FILE0004: 9 Delta waves added")
+    print("  FILE0004: 9 Delta waves + ending text added")
 
     # FILE0001: add the visible menu row
     patch_shipcomp(glbs.files[1])
