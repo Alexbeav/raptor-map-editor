@@ -127,6 +127,27 @@ Keep `.rapmod` files to changes you have the right to distribute. The format
 design reduces accidental redistribution of unchanged game data; it is not a
 legal determination about a particular mod.
 
+## Delta Sector — editing the community 4th campaign
+
+[Raptor Enhanced](https://github.com/Alexbeav/raptor-enhanced) is a native
+Windows build of the open-source engine that supports **Delta Sector**, an
+optional community-made 4th campaign (9 new waves remixed from the game's own
+three sectors). Because its installer patches *your* `FILE0001`/`FILE0004`,
+the new `MAP1G4`–`MAP9G4` levels are ordinary map items — and this editor
+picks them up automatically:
+
+1. Install [Raptor Enhanced + Delta Sector](https://github.com/Alexbeav/raptor-enhanced/releases)
+   into your game folder (backups are created).
+2. Load your now-patched GLBs here. The nine G4 maps appear in the map list
+   next to the original 27.
+3. Edit them like any level — tiles from all three tilesets on one map,
+   enemies from any bank, flight paths, difficulty, and music (Delta shares
+   the sector-3 soundtrack slots).
+4. Save `FILE0004.GLB` back to the game folder, launch `raptor.exe`, and
+   press **D** in the hangar's Ship Computer to play your changes.
+5. Share Delta redesigns as `.rapmod` — the Delta installer is deterministic,
+   so every Delta install has identical base data and imports verify cleanly.
+
 ## Tests
 
 Fixture-independent codec and validation tests run without game data:
