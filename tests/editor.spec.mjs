@@ -63,7 +63,7 @@ function spriteRecord(hits = 1, frames = 1) {
   return entry;
 }
 
-function fixture() {
+function fixture(withDelta = false) {
   const core = loadCore();
   const tiles = Array.from({ length: 150 }, () =>
     Array.from({ length: 9 }, () => ({ flats: 0, fgame: 0 })));
@@ -72,7 +72,7 @@ function fixture() {
   ] };
   const palette = new Uint8Array(768);
   for (let i = 0; i < 256; i++) palette.fill(i & 63, i * 3, i * 3 + 3);
-  const bytes = core.buildGlb({ items: [
+  const items = [
     { flags: 0, name: "PALETTE_DAT", data: palette },
     { flags: 0, name: "STARTG1TILES", data: new Uint8Array() },
     { flags: 0, name: "TILE0G1_PIC", data: gpic(32, 32, 2) },
@@ -92,7 +92,9 @@ function fixture() {
     { flags: 0, name: "", data: gpic(2, 2, 32) },
     { flags: 0, name: "DUP_PIC", data: gpic(2, 2, 33) },
     { flags: 0, name: "DUP_PIC", data: gpic(2, 2, 34) },
-  ] });
+  ];
+  if (withDelta) items.push({ flags: 0, name: "MAP1G4_MAP", data: core.buildMap(map) });
+  const bytes = core.buildGlb({ items });
   return { core, bytes };
 }
 
@@ -699,4 +701,19 @@ test("zoom choice survives a refresh and matches the dropdown", async ({ page })
   await dropFixture(page, bytes);
   await expect(page.locator("#zoomSelect")).toHaveValue("3");
   await expect(page.locator("#map")).toHaveCSS("width", "864px");
+});
+
+test("Delta Sector G4 maps share the sector-3 music slot", async ({ page }) => {
+  const { bytes } = fixture(true);
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+  await page.locator("#tabMusic").click();
+
+  await page.locator("#mapSelect").selectOption("MAP1G4_MAP");
+  await expect(page.locator("#musicSelect")).toBeEnabled();
+  await expect(page.locator("#musicInfo")).toContainText("RAP8_MUS");
+  await expect(page.locator("#musicInfo")).toContainText("MAP1G1");
+
+  await page.locator("#mapSelect").selectOption("MAP1G1_MAP");
+  await expect(page.locator("#musicInfo")).toContainText("MAP1G4");
 });
