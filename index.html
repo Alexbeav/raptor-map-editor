@@ -160,7 +160,7 @@
 
     <div class="panel active" id="panelTiles">
       <div class="row">Bank <select id="tileBank"></select>
-        <span class="hint grow">right-click map = pick tile</span></div>
+        <span class="hint grow">right-click = pick tile &middot; shift-drag = select region</span></div>
       <div id="tileSel">
         <canvas id="tileSelCanvas" width="32" height="32"></canvas>
         <div id="tileSelInfo" class="hint">no tile selected</div>
@@ -305,7 +305,9 @@
   <p>Pick a tileset bank and a tile, then click/drag on the map to paint.
   <b>Right-click the map</b> to eyedrop any tile. A red dot in the picker marks
   destructible tiles; select one to edit what it breaks into, its hit points,
-  and its bounty.</p>
+  and its bounty. <b>Shift-drag</b> selects a terrain region: <kbd>Ctrl+C</kbd>
+  copies it and <kbd>Ctrl+V</kbd> pastes at the cursor &mdash; including onto a
+  different map, ideal for splicing terrain bands between campaigns.</p>
   <h3>Sprites tab</h3>
   <p>Click a placed enemy to select it (its <b>flight path</b> overlays in cyan),
   drag to move, <kbd>Del</kbd> to remove. Pick a library entry and <i>Place mode</i>
@@ -354,8 +356,10 @@
   applying anything. <b>Undo mod import</b> restores the entire prior session.</p>
   <h3>Shortcuts</h3>
   <p><kbd>Ctrl+Z</kbd> undo &middot; <kbd>Ctrl+Y</kbd> / <kbd>Ctrl+Shift+Z</kbd> redo
-  (per map / per library bank) &middot; <kbd>Del</kbd> delete selected sprite &middot;
-  <kbd>Esc</kbd> exit place mode or close this help.</p>
+  (per map / per library bank) &middot; <kbd>Ctrl+C</kbd>/<kbd>Ctrl+V</kbd> copy/paste
+  the selection (sprite groups on the Sprites tab, terrain regions on the Tiles tab)
+  &middot; <kbd>Del</kbd> delete selected sprite &middot;
+  <kbd>Esc</kbd> exit place mode, clear the selection, or close this help.</p>
   <h3>About</h3>
   <p>Built by a lifelong Raptor fan by studying the released DOS source code and the
   GPL-2 open-source port. Every file format was validated byte-for-byte against the
@@ -1127,6 +1131,7 @@ if (typeof document !== "undefined") (function initUI() {
   let primarySprite = null;          // props/flight-path sprite within the selection
   let dragging = false, painting = false, marquee = null, dragState = null;
   let spriteClipboard = null, lastCursorCell = { c: 4, r: MAX_SPAWN_ROW };
+  let tileClipboard = null, tileSelection = null;
   const picCache = new Map();       // itemId -> canvas|null
   const tilesetStart = new Map();   // bank -> first tile item id
   const spriteLibs = new Map();     // bank -> parsed lib
@@ -1193,7 +1198,7 @@ if (typeof document !== "undefined") (function initUI() {
       undoStacks: mapEntries(undoStacks), redoStacks: mapEntries(redoStacks),
       libUndo: mapEntries(libUndo), libRedo: mapEntries(libRedo),
       musicSources: mapEntries(musicSources), musicAssignments: mapEntries(musicAssignments),
-      customMusicSerial, spriteClipboard, lastCursorCell,
+      customMusicSerial, spriteClipboard, lastCursorCell, tileClipboard,
     };
   }
 
@@ -1253,6 +1258,7 @@ if (typeof document !== "undefined") (function initUI() {
       restoreSet(dirtyMusicSlots, snapshot.dirtyMusicSlots);
       customMusicSerial = snapshot.customMusicSerial || 0;
       spriteClipboard = snapshot.spriteClipboard || null;
+      tileClipboard = snapshot.tileClipboard || null;
       lastCursorCell = snapshot.lastCursorCell || { c: 4, r: MAX_SPAWN_ROW };
       const target = mapIndex.some(m => m.name === snapshot.curMap) ? snapshot.curMap : mapIndex[0]?.name;
       if (target) openMap(target);
@@ -1465,7 +1471,8 @@ if (typeof document !== "undefined") (function initUI() {
     mapIndex = []; palette = null; curMap = null; curTile = null; curLibSel = null;
     directoryHandle = null; directorySaveConfirmed = false;
     clearSpriteSelection(); libSel = -1; placing = dragging = painting = false;
-    marquee = dragState = spriteClipboard = null; customMusicSerial = 0;
+    marquee = dragState = spriteClipboard = tileClipboard = tileSelection = null;
+    customMusicSerial = 0;
     lastModRollback = null; $("modUndoBtn").disabled = true;
     $("flatsForm").style.display = "none";
     resetArtPreview();
@@ -1754,6 +1761,13 @@ if (typeof document !== "undefined") (function initUI() {
       ctx.fillStyle = "rgba(77,163,255,.15)"; ctx.fillRect(x, y, w, h);
       ctx.strokeStyle = "#4da3ff"; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
       ctx.strokeRect(x + .5, y + .5, w, h); ctx.setLineDash([]);
+    }
+    if (tileSelection && mode === "tiles") {
+      const x = tileSelection.c1 * TILE, y = tileSelection.r1 * TILE;
+      const w = (tileSelection.c2 - tileSelection.c1 + 1) * TILE;
+      const h = (tileSelection.r2 - tileSelection.r1 + 1) * TILE;
+      ctx.strokeStyle = "#ffd228"; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+      ctx.strokeRect(x + 1, y + 1, w - 2, h - 2); ctx.setLineDash([]);
     }
   }
 
@@ -2066,6 +2080,11 @@ if (typeof document !== "undefined") (function initUI() {
     lastCursorCell = cell;
     if (e.button === 2) return;                     // handled in contextmenu
     if (mode === "tiles") {
+      if (tileSelection) { tileSelection = null; redraw(); }
+      if (e.shiftKey) {
+        marquee = { x1: cell.px, y1: cell.py, x2: cell.px, y2: cell.py };
+        redraw(); return;
+      }
       if (!curTile) { setStatus("select a tile first"); return; }
       pushUndo(); painting = true; paintCell(cell);
     } else {
@@ -2123,18 +2142,52 @@ if (typeof document !== "undefined") (function initUI() {
     if (marquee && level()) {
       const x1 = Math.min(marquee.x1, marquee.x2), x2 = Math.max(marquee.x1, marquee.x2);
       const y1 = Math.min(marquee.y1, marquee.y2), y2 = Math.max(marquee.y1, marquee.y2);
-      let first = null;
-      for (const s of level().sprites) {
-        const cx = s.x * TILE + TILE / 2, cy = s.y * TILE + TILE / 2;
-        if (cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2) {
-          selectedSprites.add(s); if (!first) first = s;
+      if (mode === "tiles") {
+        const clampC = px => Math.max(0, Math.min(MAP_COLS - 1, Math.floor(px / TILE)));
+        const clampR = py => Math.max(0, Math.min(MAP_ROWS - 1, Math.floor(py / TILE)));
+        tileSelection = { c1: clampC(x1), r1: clampR(y1), c2: clampC(x2), r2: clampR(y2) };
+        setStatus(`selected ${tileSelection.c2 - tileSelection.c1 + 1}×` +
+          `${tileSelection.r2 - tileSelection.r1 + 1} tiles — Ctrl+C to copy`);
+      } else {
+        let first = null;
+        for (const s of level().sprites) {
+          const cx = s.x * TILE + TILE / 2, cy = s.y * TILE + TILE / 2;
+          if (cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2) {
+            selectedSprites.add(s); if (!first) first = s;
+          }
         }
+        if (first) primarySprite = first;
+        updateProps();
       }
-      if (first) primarySprite = first;
-      marquee = null; updateProps(); redraw();
+      marquee = null; redraw();
     }
     painting = dragging = false; dragState = null;
   });
+
+  function copyTileRegion() {
+    if (!tileSelection || !level()) { setStatus("shift-drag on the map to select tiles first"); return; }
+    const { c1, r1, c2, r2 } = tileSelection;
+    const cells = [];
+    for (let r = r1; r <= r2; r++)
+      cells.push(level().tiles[r].slice(c1, c2 + 1).map(t => ({ ...t })));
+    tileClipboard = { w: c2 - c1 + 1, h: r2 - r1 + 1, cells };
+    scheduleSessionSave();
+    setStatus(`copied ${tileClipboard.w}×${tileClipboard.h} tiles — Ctrl+V pastes at the cursor (any map)`);
+  }
+
+  function pasteTileRegion() {
+    if (!tileClipboard) { setStatus("no tiles copied yet — shift-drag a region, then Ctrl+C"); return; }
+    if (!level()) return;
+    const c0 = Math.max(0, Math.min(MAP_COLS - tileClipboard.w, lastCursorCell.c));
+    const r0 = Math.max(0, Math.min(MAP_ROWS - tileClipboard.h, lastCursorCell.r));
+    pushUndo();
+    for (let r = 0; r < tileClipboard.h; r++)
+      for (let c = 0; c < tileClipboard.w; c++)
+        level().tiles[r0 + r][c0 + c] = { ...tileClipboard.cells[r][c] };
+    tileSelection = { c1: c0, r1: r0, c2: c0 + tileClipboard.w - 1, r2: r0 + tileClipboard.h - 1 };
+    markDirty(); redraw();
+    setStatus(`pasted ${tileClipboard.w}×${tileClipboard.h} tiles at row ${r0}`);
+  }
 
   canvas.addEventListener("contextmenu", e => {       // eyedropper
     e.preventDefault();
@@ -2150,7 +2203,7 @@ if (typeof document !== "undefined") (function initUI() {
     if (e.key === "Escape") {
       $("help").classList.add("hide");
       placing = false; $("placeBtn").textContent = "Place mode";
-      marquee = null; redraw();
+      marquee = tileSelection = null; redraw();
     }
     else if (e.key === "Delete" && mode === "sprites") deleteSelected();
     else if (e.ctrlKey && mode === "sprites" && e.key.toLowerCase() === "c") {
@@ -2158,6 +2211,12 @@ if (typeof document !== "undefined") (function initUI() {
     }
     else if (e.ctrlKey && mode === "sprites" && e.key.toLowerCase() === "v") {
       e.preventDefault(); pasteSpriteGroups();
+    }
+    else if (e.ctrlKey && mode === "tiles" && e.key.toLowerCase() === "c") {
+      e.preventDefault(); copyTileRegion();
+    }
+    else if (e.ctrlKey && mode === "tiles" && e.key.toLowerCase() === "v") {
+      e.preventDefault(); pasteTileRegion();
     }
     else if (e.ctrlKey && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
       e.preventDefault();

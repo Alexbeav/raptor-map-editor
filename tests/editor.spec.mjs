@@ -703,6 +703,44 @@ test("zoom choice survives a refresh and matches the dropdown", async ({ page })
   await expect(page.locator("#map")).toHaveCSS("width", "864px");
 });
 
+async function eyedropMapCell(page, col, row) {
+  await page.locator("#map").evaluate((canvas, cell) => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = rect.width / canvas.width, sy = rect.height / canvas.height;
+    canvas.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true,
+      clientX: rect.left + (cell.col * 32 + 16) * sx,
+      clientY: rect.top + (cell.row * 32 + 16) * sy }));
+  }, { col, row });
+}
+
+test("tile regions copy and paste across maps with undo", async ({ page }) => {
+  const { bytes } = fixture(true);
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+
+  await page.locator("#tileGridCanvas").click({ position: { x: 51, y: 17 } });
+  await clickMapCell(page, 1, 140);
+  await clickMapCell(page, 2, 140);
+
+  await dragMap(page, { col: 1, row: 140 }, { col: 2, row: 140 }, true);
+  await expect(page.locator("#status")).toContainText("selected 2×1 tiles");
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Control+c");
+  await expect(page.locator("#status")).toContainText("copied 2×1 tiles");
+
+  await page.locator("#mapSelect").selectOption("MAP1G4_MAP");
+  await moveMapPointer(page, 5, 145);
+  await page.keyboard.press("Control+v");
+  await expect(page.locator("#status")).toContainText("pasted 2×1 tiles at row 145");
+  await eyedropMapCell(page, 6, 145);
+  await expect(page.locator("#tileSelInfo")).toContainText("tile 1");
+
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Control+z");
+  await eyedropMapCell(page, 6, 145);
+  await expect(page.locator("#tileSelInfo")).toContainText("tile 0");
+});
+
 test("Delta Sector G4 maps share the sector-3 music slot", async ({ page }) => {
   const { bytes } = fixture(true);
   await page.goto(pathToFileURL(join(root, "index.html")).href);
