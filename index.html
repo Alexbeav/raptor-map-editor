@@ -140,6 +140,8 @@
   <button id="modExportBtn" disabled>Export .rapmod</button>
   <label class="file">Import .rapmod<input type="file" id="modInput" accept=".rapmod,application/json"></label>
   <button id="modUndoBtn" disabled>Undo mod import</button>
+  <button id="deltaBtn" style="display:none"
+    title="generate patched FILE0001/FILE0004 that add the community Delta Sector campaign (9 waves)">Add Delta Sector</button>
   <button id="saveBtn" disabled>Download GLB</button>
   <button id="helpBtn" title="help / about">?</button>
   <span id="status">no files loaded</span>
@@ -1106,6 +1108,115 @@ function encodePic(w, h, pixels, mask, gtype) {
   for (const part of parts) { out.set(part, offset); offset += part.length; }
   return out;
 }
+/* ---- Delta Sector generator (mirrors tools/install_delta_sector.py) -------
+   Splices each MAP{n}G4 wave from three terrain bands across the campaigns,
+   seams snapped to plain rows, sprites carried with their bands. Kept
+   byte-identical to the Python installer (parity-tested). */
+const DELTA_RECIPES = {
+  1: ["MAP1G3_MAP", "MAP1G2_MAP", "MAP1G1_MAP"], 2: ["MAP2G1_MAP", "MAP2G3_MAP", "MAP2G2_MAP"],
+  3: ["MAP3G2_MAP", "MAP3G1_MAP", "MAP3G3_MAP"], 4: ["MAP4G3_MAP", "MAP4G1_MAP", "MAP4G2_MAP"],
+  5: ["MAP5G1_MAP", "MAP5G3_MAP", "MAP5G2_MAP"], 6: ["MAP6G2_MAP", "MAP6G1_MAP", "MAP6G3_MAP"],
+  7: ["MAP7G3_MAP", "MAP7G2_MAP", "MAP7G1_MAP"], 8: ["MAP8G1_MAP", "MAP8G2_MAP", "MAP8G3_MAP"],
+  9: ["MAP9G2_MAP", "MAP9G1_MAP", "MAP9G3_MAP"],
+};
+
+function deltaPlainRows(level) {
+  const counts = new Map();
+  for (const row of level.tiles) for (const c of row) {
+    const key = c.flats + "," + c.fgame;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let base = null, bestCount = -1;
+  for (const [key, count] of counts) if (count > bestCount) { bestCount = count; base = key; }
+  const plain = new Set();
+  level.tiles.forEach((row, r) => {
+    if (row.filter(c => c.flats + "," + c.fgame === base).length >= 7) plain.add(r);
+  });
+  return plain;
+}
+
+function deltaNearestPlain(level, target, lo, hi) {
+  const plain = deltaPlainRows(level);
+  for (let d = 0; d < MAP_ROWS; d++)
+    for (const r of [target - d, target + d])
+      if (lo <= r && r <= hi && plain.has(r)) return r;
+  return target;
+}
+
+function deltaBandSprites(level, srcLo, srcHi, dstLo, mirror) {
+  const out = [];
+  for (const group of spawnGroups(level.sprites))
+    if (srcLo <= group[0].y && group[0].y < srcHi)
+      for (const s of group)
+        out.push({ ...s, y: Math.min(139, s.y - srcLo + dstLo),
+          x: mirror ? MAP_COLS - 1 - s.x : s.x });
+  return out;
+}
+
+function deltaMakeWave(byName, wave) {
+  const [botName, midName, topName] = DELTA_RECIPES[wave];
+  const top = parseMap(byName(topName)), mid = parseMap(byName(midName)),
+    bot = parseMap(byName(botName));
+  const cut1 = deltaNearestPlain(top, 50, 35, 70);
+  const midStart = deltaNearestPlain(mid, 28, 15, 55);
+  const midPlain = deltaPlainRows(mid), botPlain = deltaPlainRows(bot);
+  let cut2 = -1;
+  outer: for (let d = 0; d < 16; d++)
+    for (const r of [100 - d, 100 + d])
+      if (85 <= r && r <= 118 && botPlain.has(r) && midPlain.has(r - cut1 + midStart - 1)) {
+        cut2 = r; break outer;
+      }
+  if (cut2 < 0) cut2 = deltaNearestPlain(bot, 100, 85, 115);
+  const tiles = [];
+  for (let r = 0; r < MAP_ROWS; r++) {
+    if (r < cut1) tiles.push(top.tiles[r].map(c => ({ ...c })));
+    else if (r < cut2)
+      tiles.push(mid.tiles[Math.min(MAP_ROWS - 1, r - cut1 + midStart)].map(c => ({ ...c })));
+    else tiles.push(bot.tiles[r].map(c => ({ ...c })));
+  }
+  const sprites = [
+    ...deltaBandSprites(bot, cut2, MAP_ROWS, cut2, false),
+    ...deltaBandSprites(mid, midStart, midStart + (cut2 - cut1), cut1, true),
+    ...deltaBandSprites(top, 0, cut1, 0, false),
+  ];
+  return buildMap({ rows: MAP_ROWS, cols: MAP_COLS, tiles,
+    sprites: normalizeSpawnOrder(sprites) });
+}
+
+/* Add a visible DELTA SECTOR row to the ship-computer sector-select window
+   (SHIPCOMP_SWD in FILE0001). Returns null if the window is not in the
+   expected 12-field layout (e.g. already patched). */
+function deltaPatchShipcomp(swd) {
+  const FLD = 148, H_TXTOFS = 80, H_NUMFLDS = 96, F_Y = 128, F_TXTOFF = 140;
+  const d = Uint8Array.from(swd);
+  const dv = new DataView(d.buffer);
+  const fldofs = dv.getInt32(76, true), txtofs = dv.getInt32(H_TXTOFS, true);
+  if (dv.getInt32(H_NUMFLDS, true) !== 12) return null;
+  const fields = [];
+  for (let i = 0; i < 12; i++) fields.push(d.slice(fldofs + i * FLD, fldofs + (i + 1) * FLD));
+  const text = d.slice(txtofs);
+  const g4 = fields[10].slice();
+  g4.fill(0, 32, 48); g4.set([71, 65, 77, 69, 52], 32);   // "GAME4"
+  fields.push(g4);
+  for (const [idx, y] of [[4, 39], [5, 61], [10, 83], [12, 105], [11, 127]])
+    new DataView(fields[idx].buffer).setInt32(F_Y, y, true);
+  for (const f of fields.slice(0, 12)) {
+    const fv = new DataView(f.buffer);
+    fv.setInt32(F_TXTOFF, fv.getInt32(F_TXTOFF, true) + FLD, true);
+  }
+  const newTxtofs = fldofs + 13 * FLD;
+  new DataView(g4.buffer).setInt32(F_TXTOFF, newTxtofs + text.length - (fldofs + 12 * FLD), true);
+  const label = [68, 69, 76, 84, 65, 32, 83, 69, 67, 84, 79, 82, 0];  // "DELTA SECTOR\0"
+  const out = new Uint8Array(newTxtofs + text.length + label.length);
+  out.set(d.subarray(0, fldofs));
+  const ov = new DataView(out.buffer);
+  ov.setInt32(H_NUMFLDS, 13, true);
+  ov.setInt32(H_TXTOFS, newTxtofs, true);
+  fields.forEach((f, i) => out.set(f, fldofs + i * FLD));
+  out.set(text, newTxtofs);
+  out.set(label, newTxtofs + text.length);
+  return out;
+}
 /* ================================================================ END CORE */
 
 if (typeof document !== "undefined") (function initUI() {
@@ -1454,6 +1565,8 @@ if (typeof document !== "undefined") (function initUI() {
     $("modExportBtn").disabled = !mapIndex.length;
     fillBankSelects();
     initializeMusic();
+    $("deltaBtn").style.display = (itemId("MAP1G3_MAP") >= 0 && files.has(4) &&
+      itemId("MAP1G4_MAP") < 0 && itemId("SHIPCOMP_SWD") >= 0) ? "" : "none";
     $("drop").classList.add("hide");
     const missing = [1, 2, 3, 4].filter(n => !files.has(n));
     setStatus(`${loaded} loaded, ${mapIndex.length} maps` +
@@ -1474,6 +1587,7 @@ if (typeof document !== "undefined") (function initUI() {
     marquee = dragState = spriteClipboard = tileClipboard = tileSelection = null;
     customMusicSerial = 0;
     lastModRollback = null; $("modUndoBtn").disabled = true;
+    $("deltaBtn").style.display = "none";
     $("flatsForm").style.display = "none";
     resetArtPreview();
   }
@@ -3181,6 +3295,39 @@ if (typeof document !== "undefined") (function initUI() {
     if (!lastModRollback) return;
     restoreModRollback(lastModRollback);
     setStatus("undid the last mod import");
+  });
+
+  $("deltaBtn").addEventListener("click", () => {
+    try { if (curMap) commit(curMap); }
+    catch (err) { setStatus(`fix ${curMap} first: ${err.message}`); return; }
+    if (!confirm("Add Delta Sector?\n\n" +
+      "This downloads patched copies of FILE0001.GLB and FILE0004.GLB that add " +
+      "the community Delta Sector campaign (9 new waves remixed from all three " +
+      "sectors). Your loaded session is not changed.\n\n" +
+      "Put the downloaded files in your game folder (keep backups), then reload " +
+      "them here to edit MAP1G4-MAP9G4. Playing Delta Sector requires the " +
+      "Raptor Enhanced engine.")) return;
+    try {
+      const byName = name => {
+        const id = itemId(name);
+        if (id < 0) throw new Error(`${name} is missing from the loaded archives`);
+        return byId(id).data;
+      };
+      const items4 = files.get(4).glb.items.map(it => ({ ...it }));
+      for (let wave = 1; wave <= 9; wave++)
+        items4.push({ flags: 0, name: `MAP${wave}G4_MAP`, data: deltaMakeWave(byName, wave) });
+      const glb1 = files.get(1).glb;
+      const swdIndex = glb1.items.findIndex(it => it.name === "SHIPCOMP_SWD");
+      const patchedSwd = deltaPatchShipcomp(glb1.items[swdIndex].data);
+      if (!patchedSwd) throw new Error("the ship-computer window is not in the expected layout");
+      const items1 = glb1.items.map((it, i) => i === swdIndex ? { ...it, data: patchedSwd } : it);
+      download(buildGlb({ items: items1 }), files.get(1).filename);
+      download(buildGlb({ items: items4 }), files.get(4).filename);
+      setStatus("Delta Sector generated - put both downloaded GLBs in your game folder, " +
+        "then reload them here to edit the new maps");
+    } catch (err) {
+      setStatus(`Delta Sector generation failed: ${err.message}`);
+    }
   });
 
   function download(bytes, filename) {

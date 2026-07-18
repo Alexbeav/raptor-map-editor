@@ -703,6 +703,92 @@ test("zoom choice survives a refresh and matches the dropdown", async ({ page })
   await expect(page.locator("#map")).toHaveCSS("width", "864px");
 });
 
+function deltaFixture() {
+  const core = loadCore();
+  const plainMap = () => {
+    const tiles = Array.from({ length: 150 }, () =>
+      Array.from({ length: 9 }, () => ({ flats: 0, fgame: 0 })));
+    return core.buildMap({ rows: 150, cols: 9, tiles,
+      sprites: [{ link: 1, slib: 0, x: 1, y: 100, game: 0, level: 3 }] });
+  };
+  const shipcomp = () => {
+    const FLD = 148, fldofs = 148, numflds = 12;
+    const labels = ["PILOT", "CALLSIGN", "SAVE", "LOAD", "GAME1", "GAME2",
+      "GAME3", "TRAIN", "DIFF", "AUTO", "EXIT", "MISC"];
+    const textBytes = Buffer.from(labels.map(l => l + "\0").join(""), "ascii");
+    const out = new Uint8Array(fldofs + numflds * FLD + textBytes.length);
+    const dv = new DataView(out.buffer);
+    dv.setInt32(76, fldofs, true);
+    dv.setInt32(80, fldofs + numflds * FLD, true);
+    dv.setInt32(96, numflds, true);
+    let tOff = 0;
+    labels.forEach((l, i) => {
+      dv.setInt32(fldofs + i * FLD + 128, 20 + i * 9, true);
+      dv.setInt32(fldofs + i * FLD + 140, tOff, true);
+      tOff += l.length + 1;
+    });
+    out.set(textBytes, fldofs + numflds * FLD);
+    return out;
+  };
+  const palette = new Uint8Array(768);
+  const maps = game => Array.from({ length: 9 }, (_, w) =>
+    ({ flags: 0, name: `MAP${w + 1}G${game}_MAP`, data: plainMap() }));
+  const files = [
+    { name: "FILE0001.GLB", data: core.buildGlb({ items: [
+      { flags: 0, name: "PALETTE_DAT", data: palette },
+      { flags: 0, name: "STARTG1TILES", data: new Uint8Array() },
+      { flags: 0, name: "TILE0G1_PIC", data: gpic(32, 32, 2) },
+      { flags: 0, name: "ENDG1TILES", data: new Uint8Array() },
+      { flags: 0, name: "SPRITE1_ITM", data: core.buildSpriteLib([spriteRecord(1, 1)]) },
+      { flags: 0, name: "FLATSG1_ITM", data: core.buildFlats([{ linkflat: 0, bonus: 0, bounty: 0 }]) },
+      { flags: 0, name: "SHIPCOMP_SWD", data: shipcomp() },
+      ...maps(1),
+    ] }) },
+    { name: "FILE0002.GLB", data: core.buildGlb({ items: maps(2) }) },
+    { name: "FILE0003.GLB", data: core.buildGlb({ items: maps(3) }) },
+    { name: "FILE0004.GLB", data: core.buildGlb({ items: [
+      { flags: 0, name: "FILLER_DAT", data: Uint8Array.from([7]) },
+    ] }) },
+  ];
+  return { core, files };
+}
+
+async function dropGlbFiles(page, entries) {
+  await page.evaluate(list => {
+    const transfer = new DataTransfer();
+    for (const { name, data } of list)
+      transfer.items.add(new File([Uint8Array.from(data)], name, { type: "application/octet-stream" }));
+    window.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
+  }, entries.map(e => ({ name: e.name, data: Array.from(e.data) })));
+  await expect(page.locator("#drop")).toBeHidden();
+}
+
+test("Add Delta Sector generates patched archives in the browser", async ({ page }) => {
+  const { core, files } = deltaFixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropGlbFiles(page, files);
+
+  await expect(page.locator("#deltaBtn")).toBeVisible();
+  page.on("dialog", dialog => dialog.accept());
+  const downloads = [];
+  page.on("download", d => downloads.push(d));
+  await page.locator("#deltaBtn").click();
+  await expect.poll(() => downloads.length).toBe(2);
+
+  const byName = {};
+  for (const d of downloads)
+    byName[d.suggestedFilename()] = new Uint8Array(await readFile(await d.path()));
+  const glb4 = core.parseGlb(byName["FILE0004.GLB"].buffer);
+  for (let w = 1; w <= 9; w++)
+    expect(glb4.items.some(it => it.name === `MAP${w}G4_MAP`)).toBe(true);
+  const glb1 = core.parseGlb(byName["FILE0001.GLB"].buffer);
+  const original = files[0];
+  const swdBefore = core.parseGlb(original.data.buffer.slice(0)).items
+    .find(it => it.name === "SHIPCOMP_SWD").data.length;
+  const swdAfter = glb1.items.find(it => it.name === "SHIPCOMP_SWD").data.length;
+  expect(swdAfter).toBe(swdBefore + 148 + "DELTA SECTOR\0".length);
+});
+
 async function eyedropMapCell(page, col, row) {
   await page.locator("#map").evaluate((canvas, cell) => {
     const rect = canvas.getBoundingClientRect();

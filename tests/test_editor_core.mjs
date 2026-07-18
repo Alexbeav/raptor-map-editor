@@ -13,7 +13,7 @@ const core = html.match(/\/\* =+ CORE ==[\s\S]*?\*\/([\s\S]*?)\/\* =+ END CORE/)
 if (!core) throw new Error("CORE block not found in index.html");
 const exports_ = {};
 new Function("exports", core[1] +
-  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, validatePic, quantizeRgba, encodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus, midiToMus});"
+  "\nObject.assign(exports, {glbDecrypt, glbEncrypt, parseGlb, buildGlb, parseMap, buildMap, validateMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats, decodePic, validatePic, quantizeRgba, encodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings, diffMapPatch, applyMapPatch, diffRecordBank, applyRecordBankPatch, validateMus, midiToMus, deltaMakeWave, deltaPatchShipcomp});"
 )(exports_);
 const { parseGlb, buildGlb, parseMap, buildMap, parseSpriteLib, buildSpriteLib, parseFlats, buildFlats,
   decodePic, validatePic, quantizeRgba, encodePic, spawnGroups, normalizeSpawnOrder, deleteSpritePreservingGroups, collectMapWarnings,
@@ -149,6 +149,105 @@ check("MIDI converter matches midi3mus 1.0.0 at Raptor's 70 Hz rate",
 const programOnly = Uint8Array.from([...Buffer.from("MThd"), ...be32(6), ...be16(0), ...be16(1), ...be16(96),
   ...midiTrack([0, 0xC0, 5, 0, 0xFF, 0x2F, 0])]);
 check("MUS header counts control-only melodic channels", validateMus(midiToMus(programOnly)).channels === 1);
+
+// Delta Sector generator parity: the in-browser generator must produce the
+// same patched archives, byte for byte, as tools/install_delta_sector.py.
+{
+  const { deltaMakeWave, deltaPatchShipcomp } = exports_;
+
+  const campaignMap = (wave, game) => {
+    const tiles = Array.from({ length: 150 }, (_, r) =>
+      Array.from({ length: 9 }, (_, c) => {
+        const busyRow = ((r + wave * 3 + game) % 17) < 2;
+        if (busyRow && c >= 2 && c <= 6) return { flats: (c + r) % 5 + 1, fgame: game };
+        const noisy = ((r * 31 + c * 7 + wave * 13 + game * 5) % 11) === 0;
+        return { flats: noisy ? 9 : 0, fgame: game };
+      }));
+    const sprites = [];
+    for (let g = 0; g < 6; g++) {
+      const y = 20 + g * 22 + ((wave + game) % 5);
+      const n = 1 + (g + wave) % 3;
+      for (let i = 0; i < n; i++)
+        sprites.push({ link: i === n - 1 ? 1 : 0, slib: (g + i) % 4, x: (g * 2 + i) % 9,
+          y: Math.min(139, y + i), game, level: 3 + (g % 3) });
+    }
+    return buildMap({ rows: 150, cols: 9, tiles, sprites: normalizeSpawnOrder(sprites) });
+  };
+
+  const syntheticShipcomp = () => {
+    const FLD = 148, fldofs = 148, numflds = 12;
+    const labels = ["PILOT", "CALLSIGN", "SAVE", "LOAD", "GAME1", "GAME2",
+      "GAME3", "TRAIN", "DIFF", "AUTO", "EXIT", "MISC"];
+    const textBytes = Buffer.from(labels.map(l => l + "\0").join(""), "ascii");
+    const out = new Uint8Array(fldofs + numflds * FLD + textBytes.length);
+    const dv = new DataView(out.buffer);
+    dv.setInt32(76, fldofs, true);
+    dv.setInt32(80, fldofs + numflds * FLD, true);
+    dv.setInt32(96, numflds, true);
+    let tOff = 0;
+    labels.forEach((l, i) => {
+      const base = fldofs + i * FLD;
+      out.set(Buffer.from(`FLD${i}`, "ascii"), base + 32);
+      dv.setInt32(base + 128, 20 + i * 9, true);
+      dv.setInt32(base + 140, tOff, true);
+      tOff += l.length + 1;
+    });
+    out.set(textBytes, fldofs + numflds * FLD);
+    return out;
+  };
+
+  const fileItems = {
+    1: [{ flags: 0, name: "SHIPCOMP_SWD", data: syntheticShipcomp() },
+        ...Array.from({ length: 9 }, (_, w) =>
+          ({ flags: 0, name: `MAP${w + 1}G1_MAP`, data: campaignMap(w + 1, 0) }))],
+    2: Array.from({ length: 9 }, (_, w) =>
+        ({ flags: 0, name: `MAP${w + 1}G2_MAP`, data: campaignMap(w + 1, 1) })),
+    3: Array.from({ length: 9 }, (_, w) =>
+        ({ flags: 0, name: `MAP${w + 1}G3_MAP`, data: campaignMap(w + 1, 2) })),
+    4: [{ flags: 0, name: "FILLER_DAT", data: Uint8Array.from([7, 7, 7]) }],
+  };
+
+  const { spawnSync } = await import("node:child_process");
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const python = ["python3", "python"].find(cmd =>
+    spawnSync(cmd, ["--version"], { shell: false }).status === 0);
+  if (!python) {
+    console.log("SKIP  Delta generator parity (no python on PATH)");
+  } else {
+    const dir = mkdtempSync(join(tmpdir(), "delta-parity-"));
+    try {
+      for (const [num, items] of Object.entries(fileItems))
+        writeFileSync(join(dir, `FILE000${num}.GLB`), buildGlb({ items }));
+      const run = spawnSync(python,
+        [join(here, "..", "tools", "install_delta_sector.py"), dir], { encoding: "utf8" });
+      check("python Delta installer runs on synthetic archives", run.status === 0);
+      if (run.status !== 0) console.error(run.stdout, run.stderr);
+      else {
+        const byName = name => {
+          for (const num of [1, 2, 3, 4]) {
+            const hit = fileItems[num].find(it => it.name === name);
+            if (hit) return hit.data;
+          }
+          throw new Error(`missing ${name}`);
+        };
+        const js4 = buildGlb({ items: [...fileItems[4],
+          ...Array.from({ length: 9 }, (_, w) =>
+            ({ flags: 0, name: `MAP${w + 1}G4_MAP`, data: deltaMakeWave(byName, w + 1) }))] });
+        const js1 = buildGlb({ items: fileItems[1].map(it => it.name === "SHIPCOMP_SWD"
+          ? { ...it, data: deltaPatchShipcomp(it.data) } : it) });
+        const py1 = new Uint8Array(readFileSync(join(dir, "FILE0001.GLB")));
+        const py4 = new Uint8Array(readFileSync(join(dir, "FILE0004.GLB")));
+        check("Delta FILE0004 (9 spliced waves) matches the Python installer byte-for-byte", eq(js4, py4));
+        check("Delta FILE0001 (ship-computer patch) matches the Python installer byte-for-byte", eq(js1, py1));
+        check("patched ship computer rejects re-patching", deltaPatchShipcomp(
+          parseGlb(py1.buffer).items.find(it => it.name === "SHIPCOMP_SWD").data) === null);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
 
 const required = Array.from({ length: 5 }, (_, n) => join(dataDir, `FILE000${n}.GLB`));
 if (!required.every(existsSync)) {

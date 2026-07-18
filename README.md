@@ -136,8 +136,12 @@ three sectors). Because its installer patches *your* `FILE0001`/`FILE0004`,
 the new `MAP1G4`–`MAP9G4` levels are ordinary map items — and this editor
 picks them up automatically:
 
-1. Install [Raptor Enhanced + Delta Sector](https://github.com/Alexbeav/raptor-enhanced/releases)
-   into your game folder (backups are created).
+1. Install [Raptor Enhanced](https://github.com/Alexbeav/raptor-enhanced/releases)
+   into your game folder. For the campaign data, either run the bundled
+   `DeltaSector-optional` installer — or skip Python entirely: load your GLBs
+   in this editor and click **Add Delta Sector** to download patched
+   `FILE0001`/`FILE0004` (byte-identical to the installer's output; keep
+   backups of your originals).
 2. Load your now-patched GLBs here. The nine G4 maps appear in the map list
    next to the original 27.
 3. Edit them like any level — tiles from all three tilesets on one map,
