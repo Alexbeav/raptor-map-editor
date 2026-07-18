@@ -85,6 +85,31 @@ seconds of complete cease-fire, silently disabled on the hardest difficulty,
 which each sector reaches automatically after you complete it. The myth and
 the skeptics were both right.
 
+## 2026-07-18 (later) — Raptor goes to Linux
+
+The question was "how far away is a Linux version?" and the answer turned
+out to be: one afternoon, and most of that was proving it rather than
+porting it. The upstream engine already carried a Linux build path
+(SDL2 + ALSA), and the entire Delta Sector diff — ~1,800 lines across 27
+files — compiled on Ubuntu 26.04 / GCC 15.2 without changing a single
+line. Both stock and Delta-patched GLB sets were verified booting on a
+case-sensitive filesystem (the one honest risk, since Windows never cares
+about `FILE0004.GLB` vs `file0004.glb`), headless via SDL's dummy drivers.
+
+The engine repo also learned to ship: CI now builds Windows and Linux on
+every push, and pushing a `v*` tag assembles the full release packages —
+the familiar Windows zip in its exact hand-made layout plus a new Linux
+x64 tarball — and parks them on a draft release for review. The
+packaging payload (docs, SDL2.dll, the Delta Sector installer, which was
+already Python and therefore already cross-platform) moved into the repo
+at `pkg/release/` so the releases are reproducible from source alone.
+Verified end-to-end with a throwaway tag, then deleted like it never
+happened.
+
+A 1994 DOS shooter, reverse-engineered into portable C, now packaged for
+an operating system whose kernel was three years old when the game
+shipped. The Steam Deck is right there.
+
 ## What this project is now
 
 A complete, tested, legally-careful modding ecosystem for a 1994 game:
