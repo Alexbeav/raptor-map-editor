@@ -1690,6 +1690,11 @@ if (typeof document !== "undefined") (function initUI() {
   }
 
   function markDirty() {
+    // Keep the spawn-cursor invariant live, not just at commit, so the
+    // spawn-order warning only ever flags loaded data - never our own edits.
+    // Selection holds object identities, so reordering the array is safe.
+    const lv = level();
+    if (lv) lv.sprites = normalizeSpawnOrder(lv.sprites);
     dirty.add(curMap); updateSaveBtn(); scheduleWarnings(); scheduleSessionSave();
   }
 

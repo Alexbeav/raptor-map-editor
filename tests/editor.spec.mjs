@@ -301,12 +301,40 @@ test("load, warn, edit, undo/redo, and save a synthetic GLB", async ({ page }) =
   expect(editedMap.sprites).toHaveLength(4);
   expect(editedMap.sprites.filter(s => s.x === 2 && s.level === 3)).toHaveLength(2);
   expect(editedMap.sprites.filter(s => s.x === 4 && s.level === 3)).toHaveLength(2);
-  expect(editedMap.sprites.some(s => s.y === 109)).toBeTruthy();
-  expect(editedMap.sprites.some(s => s.y === 139)).toBeTruthy();
+  // live normalization keeps groups head-descending, so the clipboard's first
+  // group (the paste anchor) is the row-130 one: dy = 135 - 130 = +5
+  expect(editedMap.sprites.some(s => s.y === 105)).toBeTruthy();
+  expect(editedMap.sprites.some(s => s.y === 135)).toBeTruthy();
   expect(editedMap.sprites.every(s => s.link === 1)).toBeTruthy();
   expect(editedFlats[1].bonus).toBe(30);
   expect(editedLib[0].hits).toBe(40);
   expect(new DataView(byName("RAP8_MUS").buffer, byName("RAP8_MUS").byteOffset).getUint16(8, true)).toBe(1);
+});
+
+test("live sprite edits keep spawn order normalized so stall warnings never fire", async ({ page }) => {
+  const { bytes } = fixture();
+  await page.goto(pathToFileURL(join(root, "index.html")).href);
+  await dropFixture(page, bytes);
+
+  // the fixture ships exactly one warning (sprite level 0 never spawns)
+  await expect(page.locator("#warningSummary")).toContainText("1 map warning");
+
+  await page.locator("#tabSprites").click();
+  await page.locator("#spriteList div[data-i='0']").click();
+  await page.locator("#placeBtn").click();
+  await clickMapCell(page, 3, 130);            // below the existing head at row 100
+  await clickMapCell(page, 5, 110);            // then between the two
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#warningSummary")).toContainText("1 map warning");
+  await expect(page.locator("#warningList button")).toHaveCount(1);
+  await expect(page.locator("#warningList")).not.toContainText("stalls the cursor");
+
+  // row edits from the props panel reorder live too
+  await page.locator("#propY").fill("95");
+  await page.locator("#propY").press("Tab");
+  await expect(page.locator("#warningSummary")).toContainText("1 map warning");
+  await expect(page.locator("#warningList button")).toHaveCount(1);
+  await expect(page.locator("#warningList")).not.toContainText("stalls the cursor");
 });
 
 test("JSON import rejects an unknown named map instead of overwriting the current map", async ({ page }) => {
